@@ -1,0 +1,55 @@
+app:
+  name: "Sistema Predicción de Fallos"
+  debug: false
+
+model_params:
+  n_estimators: 100
+  max_depth: 10
+  min_samples_split: 5
+  min_samples_leaf: 2
+  cv_folds: 5
+
+vida_util_params:
+  ÓPTIMO: [15, 5, 5, 25]
+  OPERATIVO: [40, 8, 20, 55]
+  PREVENTIVO: [65, 8, 50, 80]
+  CRÍTICO: [88, 6, 75, 100]
+
+incidencias_lambda:
+  BAJA: 0
+  MEDIA: 1
+  ALTA: 3
+  CRÍTICA: 5
+
+costo_params:
+  BAJO: [0, 30]
+  MEDIO: [20, 80]
+  REGULAR: [70, 150]
+  ALTO: [150, 400]
+
+equipment_types:
+  - "Computadora"
+  - "Impresora"
+  - "Servidor"
+  - "Router"
+  - "Switch"
+  - "Monitor"
+  - "Proyector"
+  - "Escáner"
+
+locations:
+  - "UDLAPARK"
+  - "GRANADOS"
+  - "COLON"
+
+hardware_states:
+  - "Excelente"
+  - "Bueno"
+  - "Regular"
+  - "Crítico"
+
+risk_levels:
+  - "Bajo"
+  - "Medio"
+  - "Alto"
+  - "Crítico"

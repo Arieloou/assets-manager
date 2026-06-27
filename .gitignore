@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Credentials with sensitive data
+features/auth/credentials.yaml
