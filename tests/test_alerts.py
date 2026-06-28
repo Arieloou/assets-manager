@@ -51,13 +51,13 @@ class TestFeatureImportanceViewer:
 
     def test_init_stores_trainer(self, trained_model_and_preprocessor):
         from features.alerts.feature_importance import FeatureImportanceViewer
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         viewer = FeatureImportanceViewer(trainer)
         assert viewer.trainer is trainer
 
     def test_trainer_importance_accessible(self, trained_model_and_preprocessor):
         from features.alerts.feature_importance import FeatureImportanceViewer
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         viewer = FeatureImportanceViewer(trainer)
         importance = viewer.trainer.get_feature_importance()
         assert isinstance(importance, dict)

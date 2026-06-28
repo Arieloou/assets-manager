@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional
@@ -41,8 +41,8 @@ class FilterManager:
             if vida_util_key in vida_params:
                 mean, std, clip_low, clip_high = vida_params[vida_util_key]
                 self._filtered_df = self._filtered_df[
-                    (self._filtered_df["vida_util"] >= clip_low) &
-                    (self._filtered_df["vida_util"] <= clip_high)
+                    (self._filtered_df["vida_util_consumida"] >= clip_low) &
+                    (self._filtered_df["vida_util_consumida"] <= clip_high)
                 ]
 
         # Filter by TASA INCIDENCIAS
@@ -50,7 +50,7 @@ class FilterManager:
             tasa_key = self._active_filters["tasa_incidencias"]
             lambda_val = get_incidencias_lambda().get(tasa_key, 0)
             self._filtered_df = self._filtered_df[
-                self._filtered_df["incidencias"] == lambda_val
+                self._filtered_df["tasa_incidencias_tecnicas"] == lambda_val
             ]
 
         # Filter by COSTO REPARACIÓN
@@ -60,22 +60,22 @@ class FilterManager:
             if costo_key in costo_ranges:
                 min_costo, max_costo = costo_ranges[costo_key]
                 self._filtered_df = self._filtered_df[
-                    (self._filtered_df["costo_reparacion"] >= min_costo) &
-                    (self._filtered_df["costo_reparacion"] <= max_costo)
+                    (self._filtered_df["costo_mto_reactivo_acumulado"] >= min_costo) &
+                    (self._filtered_df["costo_mto_reactivo_acumulado"] <= max_costo)
                 ]
 
         # Filter by UBICACIÓN
         if "ubicacion" in self._active_filters and self._active_filters["ubicacion"]:
             ubicaciones = self._active_filters["ubicacion"]
             self._filtered_df = self._filtered_df[
-                self._filtered_df["ubicacion"].isin(ubicaciones)
+                self._filtered_df["ubicacion_activo"].isin(ubicaciones)
             ]
 
         # Filter by ESTADO INTEGRIDAD
         if "estado_integridad" in self._active_filters and self._active_filters["estado_integridad"]:
             estados = self._active_filters["estado_integridad"]
             self._filtered_df = self._filtered_df[
-                self._filtered_df["estado_integridad"].isin(estados)
+                self._filtered_df["estado_integridad_hardware"].isin(estados)
             ]
 
         # Filter by TIPO EQUIPO
@@ -102,11 +102,11 @@ class FilterManager:
             vida_util_options = list(get_vida_util_params().keys())
             vida_util_selected = st.selectbox(
                 "VIDA ÚTIL",
-                options=[""] + vida_util_options,
+                options=["TODOS"] + vida_util_options,
                 index=0,
                 key="filter_vida_util"
             )
-            if vida_util_selected:
+            if vida_util_selected and vida_util_selected != "TODOS":
                 self._active_filters["vida_util"] = vida_util_selected
             elif "vida_util" in self._active_filters:
                 del self._active_filters["vida_util"]
@@ -116,11 +116,11 @@ class FilterManager:
             tasa_options = list(get_incidencias_lambda().keys())
             tasa_selected = st.selectbox(
                 "TASA INCIDENCIAS",
-                options=[""] + tasa_options,
+                options=["TODOS"] + tasa_options,
                 index=0,
                 key="filter_tasa_incidencias"
             )
-            if tasa_selected:
+            if tasa_selected and tasa_selected != "TODOS":
                 self._active_filters["tasa_incidencias"] = tasa_selected
             elif "tasa_incidencias" in self._active_filters:
                 del self._active_filters["tasa_incidencias"]
@@ -130,11 +130,11 @@ class FilterManager:
             costo_options = list(get_costo_params().keys())
             costo_selected = st.selectbox(
                 "COSTO REPARACIÓN",
-                options=[""] + costo_options,
+                options=["TODOS"] + costo_options,
                 index=0,
                 key="filter_costo_reparacion"
             )
-            if costo_selected:
+            if costo_selected and costo_selected != "TODOS":
                 self._active_filters["costo_reparacion"] = costo_selected
             elif "costo_reparacion" in self._active_filters:
                 del self._active_filters["costo_reparacion"]

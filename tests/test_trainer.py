@@ -18,7 +18,7 @@ class TestTrain:
     """Verify model training."""
 
     def test_train_sets_feature_importances(self, trained_model_and_preprocessor):
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         importances = trainer._feature_importances
         assert importances is not None
         assert len(importances) == 6  # 6 features
@@ -31,15 +31,15 @@ class TestTrain:
         targets = DataLoader.get_targets(sample_pascal_df)
 
         X = preprocessor.encode_categorical(features.copy(), fit=True)
-        y = preprocessor.encode_target(targets.copy()[["Estado_Integridad_Hardware"]], fit=True)
+        y = preprocessor.encode_target(targets.copy()[["estado_integridad_hardware"]], fit=True)
 
         feature_cols = [
-            "Vida_Util_Consumida", "Tasa_Incidencias_Tecnicas",
-            "Tiempo_Inactividad_Acumulado", "Costo_Mto_Reactivo_Acumulado",
-            "Ubicacion_Activo_encoded", "Tipo_Equipo_encoded",
+            "vida_util_consumida", "tasa_incidencias_tecnicas",
+            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
+            "ubicacion_activo_encoded", "tipo_equipo_encoded",
         ]
         trainer = ModelTrainer()
-        result = trainer.train(X[feature_cols], y["Estado_Integridad_Hardware_encoded"])
+        result = trainer.train(X[feature_cols], y["estado_integridad_hardware_encoded"])
         assert result is trainer
 
 
@@ -54,16 +54,16 @@ class TestCrossValidate:
         targets = DataLoader.get_targets(sample_pascal_df)
 
         X = preprocessor.encode_categorical(features.copy(), fit=True)
-        y = preprocessor.encode_target(targets.copy()[["Estado_Integridad_Hardware"]], fit=True)
+        y = preprocessor.encode_target(targets.copy()[["estado_integridad_hardware"]], fit=True)
 
         feature_cols = [
-            "Vida_Util_Consumida", "Tasa_Incidencias_Tecnicas",
-            "Tiempo_Inactividad_Acumulado", "Costo_Mto_Reactivo_Acumulado",
-            "Ubicacion_Activo_encoded", "Tipo_Equipo_encoded",
+            "vida_util_consumida", "tasa_incidencias_tecnicas",
+            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
+            "ubicacion_activo_encoded", "tipo_equipo_encoded",
         ]
         trainer = ModelTrainer()
         cv_results = trainer.cross_validate(
-            X[feature_cols], y["Estado_Integridad_Hardware_encoded"], k=5
+            X[feature_cols], y["estado_integridad_hardware_encoded"], k=5
         )
 
         assert "mean_accuracy" in cv_results
@@ -79,16 +79,16 @@ class TestCrossValidate:
         targets = DataLoader.get_targets(sample_pascal_df)
 
         X = preprocessor.encode_categorical(features.copy(), fit=True)
-        y = preprocessor.encode_target(targets.copy()[["Estado_Integridad_Hardware"]], fit=True)
+        y = preprocessor.encode_target(targets.copy()[["estado_integridad_hardware"]], fit=True)
 
         feature_cols = [
-            "Vida_Util_Consumida", "Tasa_Incidencias_Tecnicas",
-            "Tiempo_Inactividad_Acumulado", "Costo_Mto_Reactivo_Acumulado",
-            "Ubicacion_Activo_encoded", "Tipo_Equipo_encoded",
+            "vida_util_consumida", "tasa_incidencias_tecnicas",
+            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
+            "ubicacion_activo_encoded", "tipo_equipo_encoded",
         ]
         trainer = ModelTrainer()
         cv_results = trainer.cross_validate(
-            X[feature_cols], y["Estado_Integridad_Hardware_encoded"], k=5
+            X[feature_cols], y["estado_integridad_hardware_encoded"], k=5
         )
         assert 0.0 <= cv_results["mean_accuracy"] <= 1.0
 
@@ -97,7 +97,7 @@ class TestGetFeatureImportance:
     """Verify feature importance retrieval after training."""
 
     def test_importance_dict_has_correct_keys(self, trained_model_and_preprocessor):
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         importance = trainer.get_feature_importance()
         assert isinstance(importance, dict)
         assert len(importance) == 6
@@ -105,7 +105,7 @@ class TestGetFeatureImportance:
             assert name in importance
 
     def test_importance_values_sum_to_one(self, trained_model_and_preprocessor):
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         importance = trainer.get_feature_importance()
         total = sum(importance.values())
         assert abs(total - 1.0) < 0.01
@@ -115,7 +115,7 @@ class TestSaveLoadModel:
     """Verify model persistence with joblib."""
 
     def test_save_and_load_roundtrip(self, trained_model_and_preprocessor, tmp_path):
-        trainer, _ = trained_model_and_preprocessor
+        trainer, _, _ = trained_model_and_preprocessor
         model_path = tmp_path / "test_model.joblib"
         trainer.save_model(str(model_path))
 

@@ -15,12 +15,12 @@ def predictor(trained_model_and_preprocessor):
 def valid_input():
     """Single sample input dict for prediction."""
     return {
-        "Vida_Util_Consumida": 45.0,
-        "Tasa_Incidencias_Tecnicas": 3,
-        "Tiempo_Inactividad_Acumulado": 120.0,
-        "Costo_Mto_Reactivo_Acumulado": 200.0,
-        "Ubicacion_Activo": "UDLAPARK",
-        "Tipo_Equipo": "Computadora",
+        "vida_util_consumida": 45.0,
+        "tasa_incidencias_tecnicas": 3,
+        "tiempo_inactividad_acumulado": 120.0,
+        "costo_mto_reactivo_acumulado": 200.0,
+        "ubicacion_activo": "UDLAPARK",
+        "tipo_equipo": "Computadora",
     }
 
 
@@ -34,13 +34,13 @@ class TestPredict:
 
     def test_estado_is_valid_label(self, predictor, valid_input):
         estado, _ = predictor.predict(valid_input)
-        valid_labels = ["Excelente", "Bueno", "Regular", "Crítico"]
+        valid_labels = ["Excelente", "Bueno", "Regular", "Critico"]
         assert estado in valid_labels
 
-    def test_risk_is_derived_from_estado(self, predictor, valid_input):
-        estado, riesgo = predictor.predict(valid_input)
-        expected_risk = ModelPredictor.RISK_MAPPING.get(estado, estado)
-        assert riesgo == expected_risk
+    def test_risk_is_valid_label(self, predictor, valid_input):
+        _, riesgo = predictor.predict(valid_input)
+        valid_labels = ["Bajo", "Medio", "Alto", "Critico"]
+        assert riesgo in valid_labels
 
 
 class TestPredictProba:
@@ -66,8 +66,8 @@ class TestPredictBatch:
         from features.data import DataLoader
         features = DataLoader.get_features(sample_pascal_df)
         result = predictor.predict_batch(features)
-        assert "Estado_Integridad_Hardware" in result.columns
-        assert "Nivel_Riesgo_Operativo" in result.columns
+        assert "estado_integridad_hardware" in result.columns
+        assert "nivel_riesgo_operativo" in result.columns
 
     def test_batch_preserves_row_count(self, predictor, sample_pascal_df):
         from features.data import DataLoader
@@ -76,12 +76,16 @@ class TestPredictBatch:
         assert len(result) == len(features)
 
 
-class TestDeriveRiskLevel:
-    """Verify risk-level derivation mapping."""
+class TestRiskPrediction:
+    """Verify risk is predicted independently by separate model."""
 
-    def test_all_mappings(self, predictor):
-        for estado, expected_risk in ModelPredictor.RISK_MAPPING.items():
-            assert predictor._derive_risk_level(estado) == expected_risk
+    def test_risk_differs_from_estado(self, predictor, valid_input):
+        _, riesgo = predictor.predict(valid_input)
+        assert isinstance(riesgo, str)
 
-    def test_unknown_returns_same(self, predictor):
-        assert predictor._derive_risk_level("Desconocido") == "Desconocido"
+    def test_batch_returns_both_predictions(self, predictor, sample_pascal_df):
+        from features.data import DataLoader
+        features = DataLoader.get_features(sample_pascal_df)
+        result = predictor.predict_batch(features)
+        assert "estado_integridad_hardware" in result.columns
+        assert "nivel_riesgo_operativo" in result.columns

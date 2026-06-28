@@ -1,4 +1,5 @@
-﻿import io
+import csv
+import io
 from datetime import datetime
 
 import pandas as pd
@@ -13,7 +14,8 @@ def get_risk_level(estado_integridad: str) -> str:
         "Excelente": "Bajo",
         "Bueno": "Medio",
         "Regular": "Alto",
-        "Crítico": "Crítico"
+        "Critico": "Critico",
+        "Crítico": "Critico"
     }
     return risk_mapping.get(estado_integridad, "Medio")
 
@@ -30,6 +32,7 @@ def validate_schema(df: pd.DataFrame) -> bool:
         "estado_integridad_hardware",
         "tipo_equipo"
     ]
+
     return all(col in df.columns for col in required_columns)
 
 
@@ -45,7 +48,18 @@ def import_csv(uploaded_file) -> pd.DataFrame:
     Raises:
         ValueError: If CSV schema is invalid
     """
-    df = pd.read_csv(uploaded_file)
+    # Auto-detect delimiter (supports comma and semicolon CSV files)
+    sample = uploaded_file.read(4096)
+    if isinstance(sample, bytes):
+        sample = sample.decode("utf-8")
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = ","
+    uploaded_file.seek(0)
+    
+    df = pd.read_csv(uploaded_file, sep=delimiter)
     
     if not validate_schema(df):
         raise ValueError("Invalid CSV schema. Required columns: " + ", ".join([
@@ -59,12 +73,10 @@ def import_csv(uploaded_file) -> pd.DataFrame:
             "tipo_equipo"
         ]))
     
-    # Add timestamp column
-    df["timestamp_registro"] = datetime.now()
-    
-    # Calculate and add risk level based on hardware integrity state
+    # Calculate risk level and add timestamp column
     df["nivel_riesgo_operativo"] = df["estado_integridad_hardware"].apply(get_risk_level)
-    
+    df["timestamp_registro"] = datetime.now()
+        
     return df
 
 
@@ -102,7 +114,7 @@ def save_to_database(df: pd.DataFrame) -> int:
             "estado_integridad_hardware": row["estado_integridad_hardware"],
             "tipo_equipo": row["tipo_equipo"],
             "nivel_riesgo_operativo": row["nivel_riesgo_operativo"],
-            "timestamp_registro": row["timestamp_registro"]
+            "timestamp_registro": row["timestamp_registro"],
         }
         save_equipo(equipo_data)
         saved_count += 1

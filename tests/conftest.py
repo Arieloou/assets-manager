@@ -22,8 +22,8 @@ def sample_equipos_df():
     n = 50
     ubicaciones = ["UDLAPARK", "GRANADOS", "COLON"]
     tipos = ["Computadora", "Impresora", "Servidor", "Router", "Switch"]
-    estados = ["Excelente", "Bueno", "Regular", "Crítico"]
-    riesgos = ["Bajo", "Medio", "Alto", "Crítico"]
+    estados = ["Excelente", "Bueno", "Regular", "Critico"]
+    riesgos = ["Bajo", "Medio", "Alto", "Critico"]
 
     return pd.DataFrame({
         "id": [f"uuid-{i}" for i in range(n)],
@@ -42,20 +42,9 @@ def sample_equipos_df():
 
 @pytest.fixture
 def sample_pascal_df(sample_equipos_df):
-    """Same data but with PascalCase column names (spec format)."""
-    mapping = {
-        "id_equipo": "ID_Equipo",
-        "vida_util_consumida": "Vida_Util_Consumida",
-        "tasa_incidencias_tecnicas": "Tasa_Incidencias_Tecnicas",
-        "tiempo_inactividad_acumulado": "Tiempo_Inactividad_Acumulado",
-        "costo_mto_reactivo_acumulado": "Costo_Mto_Reactivo_Acumulado",
-        "ubicacion_activo": "Ubicacion_Activo",
-        "estado_integridad_hardware": "Estado_Integridad_Hardware",
-        "tipo_equipo": "Tipo_Equipo",
-        "nivel_riesgo_operativo": "Nivel_Riesgo_Operativo",
-    }
-    df = sample_equipos_df.rename(columns=mapping)
-    return df
+    """Same data but with snake_case column names (aligned with database schema)."""
+    # Simply return sample_equipos_df since it is already in snake_case
+    return sample_equipos_df
 
 
 @pytest.fixture
@@ -70,7 +59,8 @@ def sample_csv_file(tmp_path, sample_equipos_df):
 
 @pytest.fixture
 def trained_model_and_preprocessor(sample_pascal_df):
-    """Return a fitted (trainer, preprocessor) pair for prediction tests."""
+    """Return a fitted (trainer, preprocessor) tuple for multi-output prediction tests."""
+    import numpy as np
     from features.data import DataLoader, Preprocessor
     from features.model import ModelTrainer
 
@@ -83,6 +73,7 @@ def trained_model_and_preprocessor(sample_pascal_df):
 
     X = preprocessor.encode_categorical(features.copy(), fit=True)
     y = preprocessor.encode_target(targets.copy()[["Estado_Integridad_Hardware"]], fit=True)
+    y_riesgo = preprocessor.encode_risk_target(targets.copy()[["Nivel_Riesgo_Operativo"]], fit=True)
 
     # Select only the model-ready columns
     feature_cols = [
@@ -94,9 +85,13 @@ def trained_model_and_preprocessor(sample_pascal_df):
         "Tipo_Equipo_encoded",
     ]
     X_ready = X[feature_cols]
-    y_ready = y["Estado_Integridad_Hardware_encoded"]
+    y_estado = y["Estado_Integridad_Hardware_encoded"].values
+    y_riesgo = y_riesgo["Nivel_Riesgo_Operativo_encoded"].values
+    
+    # Combine targets using np.column_stack for multi-output training
+    y_combined = np.column_stack((y_estado, y_riesgo))
 
     trainer = ModelTrainer()
-    trainer.train(X_ready, y_ready)
+    trainer.train_multioutput(X_ready, y_combined)
 
     return trainer, preprocessor

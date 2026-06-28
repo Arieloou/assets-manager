@@ -42,8 +42,8 @@ class TestGetFeatures:
 
     def test_get_features_excludes_targets(self, sample_pascal_df):
         features = DataLoader.get_features(sample_pascal_df)
-        assert "Estado_Integridad_Hardware" not in features.columns
-        assert "Nivel_Riesgo_Operativo" not in features.columns
+        assert "estado_integridad_hardware" not in features.columns
+        assert "nivel_riesgo_operativo" not in features.columns
 
     def test_get_features_on_empty_raises(self):
         df = pd.DataFrame()
@@ -56,7 +56,7 @@ class TestGetTargets:
 
     def test_get_targets_returns_target_columns(self, sample_pascal_df):
         targets = DataLoader.get_targets(sample_pascal_df)
-        assert "Estado_Integridad_Hardware" in targets.columns
+        assert "estado_integridad_hardware" in targets.columns
 
     def test_get_targets_on_missing_returns_empty(self):
         df = pd.DataFrame({"foo": [1, 2]})

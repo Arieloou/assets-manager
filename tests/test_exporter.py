@@ -27,7 +27,8 @@ class TestGetRiskLevel:
         assert get_risk_level("Regular") == "Alto"
 
     def test_critico_maps_to_critico(self):
-        assert get_risk_level("Crítico") == "Crítico"
+        assert get_risk_level("Critico") == "Critico"
+        assert get_risk_level("Crítico") == "Critico"
 
     def test_unknown_defaults_to_medio(self):
         assert get_risk_level("Desconocido") == "Medio"
@@ -106,9 +107,9 @@ class TestSaveToDatabase:
             "tiempo_inactividad_acumulado": [50.0, 100.0],
             "costo_mto_reactivo_acumulado": [30.0, 60.0],
             "ubicacion_activo": ["UDLAPARK", "COLON"],
-            "estado_integridad_hardware": ["Bueno", "Crítico"],
+            "estado_integridad_hardware": ["Bueno", "Critico"],
             "tipo_equipo": ["Computadora", "Servidor"],
-            "nivel_riesgo_operativo": ["Medio", "Crítico"],
+            "nivel_riesgo_operativo": ["Medio", "Critico"],
             "timestamp_registro": ["2025-01-01", "2025-01-02"],
         })
         count = save_to_database(df)

@@ -9,33 +9,33 @@ model_params:
   min_samples_leaf: 2
   cv_folds: 5
 
+# vida_util_consumida ranges in days [mean, std, clip_low, clip_high]
 vida_util_params:
-  ÓPTIMO: [15, 5, 5, 25]
-  OPERATIVO: [40, 8, 20, 55]
-  PREVENTIVO: [65, 8, 50, 80]
-  CRÍTICO: [88, 6, 75, 100]
+  ÓPTIMO: [1250, 500, 0, 2000]
+  OPERATIVO: [3500, 800, 2000, 5000]
+  PREVENTIVO: [6500, 800, 5000, 8000]
+  CRÍTICO: [9000, 600, 8000, 10000]
 
+# tasa_incidencias_tecnicas threshold values
 incidencias_lambda:
   BAJA: 0
   MEDIA: 1
   ALTA: 3
   CRÍTICA: 5
 
+# costo_mto_reactivo_acumulado ranges [min, max]
 costo_params:
-  BAJO: [0, 30]
-  MEDIO: [20, 80]
-  REGULAR: [70, 150]
-  ALTO: [150, 400]
+  BAJO: [0, 3000]
+  MEDIO: [3000, 10000]
+  REGULAR: [10000, 25000]
+  ALTO: [25000, 40000]
 
 equipment_types:
-  - "Computadora"
+  - "Computadora de Escritorio"
   - "Impresora"
   - "Servidor"
-  - "Router"
-  - "Switch"
-  - "Monitor"
+  - "Laptop"
   - "Proyector"
-  - "Escáner"
 
 locations:
   - "UDLAPARK"
@@ -46,10 +46,10 @@ hardware_states:
   - "Excelente"
   - "Bueno"
   - "Regular"
-  - "Crítico"
+  - "Critico"
 
 risk_levels:
   - "Bajo"
   - "Medio"
   - "Alto"
-  - "Crítico"
+  - "Critico"

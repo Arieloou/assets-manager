@@ -20,22 +20,26 @@ class TestEndToEndPipeline:
         features = loader.get_features(sample_pascal_df)
         targets = loader.get_targets(sample_pascal_df)
         assert len(features) == len(sample_pascal_df)
-        assert "Estado_Integridad_Hardware" in targets.columns
+        assert "estado_integridad_hardware" in targets.columns
 
         # 3. Preprocess
         preprocessor = Preprocessor()
         X = preprocessor.encode_categorical(features.copy(), fit=True)
         y = preprocessor.encode_target(
-            targets.copy()[["Estado_Integridad_Hardware"]], fit=True
+            targets.copy()[["estado_integridad_hardware"]], fit=True
+        )
+        y_riesgo = preprocessor.encode_risk_target(
+            targets.copy()[["nivel_riesgo_operativo"]], fit=True
         )
 
         feature_cols = [
-            "Vida_Util_Consumida", "Tasa_Incidencias_Tecnicas",
-            "Tiempo_Inactividad_Acumulado", "Costo_Mto_Reactivo_Acumulado",
-            "Ubicacion_Activo_encoded", "Tipo_Equipo_encoded",
+            "vida_util_consumida", "tasa_incidencias_tecnicas",
+            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
+            "ubicacion_activo_encoded", "tipo_equipo_encoded",
         ]
         X_ready = X[feature_cols]
-        y_ready = y["Estado_Integridad_Hardware_encoded"]
+        y_ready = y["estado_integridad_hardware_encoded"]
+        y_riesgo_ready = y_riesgo["nivel_riesgo_operativo_encoded"]
 
         # 4. Cross-validate
         trainer = ModelTrainer()
@@ -47,41 +51,45 @@ class TestEndToEndPipeline:
         trainer.train(X_ready, y_ready)
         assert trainer._feature_importances is not None
 
+        # Train risk model
+        trainer_risk = ModelTrainer()
+        trainer_risk.train_risk(X_ready, y_riesgo_ready)
+
         # 6. Feature importance
         importance = trainer.get_feature_importance()
         assert len(importance) == 6
         assert abs(sum(importance.values()) - 1.0) < 0.01
 
         # 7. Predict single sample
-        predictor = ModelPredictor(trainer.model, preprocessor)
+        predictor = ModelPredictor(trainer.model, preprocessor, trainer_risk.model)
         estado, riesgo = predictor.predict({
-            "Vida_Util_Consumida": 60.0,
-            "Tasa_Incidencias_Tecnicas": 5,
-            "Tiempo_Inactividad_Acumulado": 200.0,
-            "Costo_Mto_Reactivo_Acumulado": 250.0,
-            "Ubicacion_Activo": "GRANADOS",
-            "Tipo_Equipo": "Servidor",
+            "vida_util_consumida": 60.0,
+            "tasa_incidencias_tecnicas": 5,
+            "tiempo_inactividad_acumulado": 200.0,
+            "costo_mto_reactivo_acumulado": 250.0,
+            "ubicacion_activo": "GRANADOS",
+            "tipo_equipo": "Servidor",
         })
-        assert estado in ["Excelente", "Bueno", "Regular", "Crítico"]
-        assert riesgo in ["Bajo", "Medio", "Alto", "Critico", "Crítico"]
+        assert estado in ["Excelente", "Bueno", "Regular", "Critico"]
+        assert riesgo in ["Bajo", "Medio", "Alto", "Critico"]
 
         # 8. Predict batch
         batch_result = predictor.predict_batch(features.copy())
         assert len(batch_result) == len(features)
-        assert "Estado_Integridad_Hardware" in batch_result.columns
-        assert "Nivel_Riesgo_Operativo" in batch_result.columns
+        assert "estado_integridad_hardware" in batch_result.columns
+        assert "nivel_riesgo_operativo" in batch_result.columns
 
         # 9. Evaluate
         evaluator = ModelEvaluator(trainer.model, preprocessor)
-        y_true = targets["Estado_Integridad_Hardware"].tolist()
-        y_pred = batch_result["Estado_Integridad_Hardware"].tolist()
+        y_true = targets["estado_integridad_hardware"].tolist()
+        y_pred = batch_result["estado_integridad_hardware"].tolist()
         cm = evaluator.confusion_matrix(y_true, y_pred)
         assert cm.shape == (4, 4)
         acc = evaluator.accuracy_score(y_true, y_pred)
         assert 0.0 <= acc <= 1.0
 
         # 10. Data drift (baseline vs same data — no drift expected)
-        baseline_features = features[["Vida_Util_Consumida", "Costo_Mto_Reactivo_Acumulado"]]
+        baseline_features = features[["vida_util_consumida", "costo_mto_reactivo_acumulado"]]
         detector = DataDriftDetector(baseline_features)
         drift_results = detector.check_drift(baseline_features)
         for key, result in drift_results.items():
@@ -96,26 +104,33 @@ class TestEndToEndPipeline:
 
         X = preprocessor.encode_categorical(features.copy(), fit=True)
         y = preprocessor.encode_target(
-            targets.copy()[["Estado_Integridad_Hardware"]], fit=True
+            targets.copy()[["estado_integridad_hardware"]], fit=True
+        )
+        y_riesgo = preprocessor.encode_risk_target(
+            targets.copy()[["nivel_riesgo_operativo"]], fit=True
         )
         feature_cols = [
-            "Vida_Util_Consumida", "Tasa_Incidencias_Tecnicas",
-            "Tiempo_Inactividad_Acumulado", "Costo_Mto_Reactivo_Acumulado",
-            "Ubicacion_Activo_encoded", "Tipo_Equipo_encoded",
+            "vida_util_consumida", "tasa_incidencias_tecnicas",
+            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
+            "ubicacion_activo_encoded", "tipo_equipo_encoded",
         ]
 
         # Train and predict
         trainer = ModelTrainer()
-        trainer.train(X[feature_cols], y["Estado_Integridad_Hardware_encoded"])
-        predictor = ModelPredictor(trainer.model, preprocessor)
+        trainer.train(X[feature_cols], y["estado_integridad_hardware_encoded"])
+        
+        trainer_risk = ModelTrainer()
+        trainer_risk.train_risk(X[feature_cols], y_riesgo["nivel_riesgo_operativo_encoded"])
+        
+        predictor = ModelPredictor(trainer.model, preprocessor, trainer_risk.model)
 
         sample_input = {
-            "Vida_Util_Consumida": 30.0,
-            "Tasa_Incidencias_Tecnicas": 1,
-            "Tiempo_Inactividad_Acumulado": 50.0,
-            "Costo_Mto_Reactivo_Acumulado": 80.0,
-            "Ubicacion_Activo": "COLON",
-            "Tipo_Equipo": "Router",
+            "vida_util_consumida": 30.0,
+            "tasa_incidencias_tecnicas": 1,
+            "tiempo_inactividad_acumulado": 50.0,
+            "costo_mto_reactivo_acumulado": 80.0,
+            "ubicacion_activo": "COLON",
+            "tipo_equipo": "Router",
         }
         original_pred = predictor.predict(sample_input)
 
@@ -124,7 +139,7 @@ class TestEndToEndPipeline:
         trainer.save_model(str(model_path))
         new_trainer = ModelTrainer()
         new_trainer.load_model(str(model_path))
-        new_predictor = ModelPredictor(new_trainer.model, preprocessor)
+        new_predictor = ModelPredictor(new_trainer.model, preprocessor, trainer_risk.model)
 
         loaded_pred = new_predictor.predict(sample_input)
 

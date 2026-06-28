@@ -1,6 +1,6 @@
 ﻿import pandas as pd
 import numpy as np
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 
 
 class Preprocessor:
@@ -10,15 +10,16 @@ class Preprocessor:
         self.encoders = {}
         self.target_encoder = None
         self.risk_encoder = None
+        self.location_encoder = None
         self._feature_names = [
-            'Vida_Util_Consumida',
-            'Tasa_Incidencias_Tecnicas',
-            'Tiempo_Inactividad_Acumulado',
-            'Costo_Mto_Reactivo_Acumulado',
-            'Ubicacion_Activo',
-            'Tipo_Equipo'
+            'vida_util_consumida',
+            'tasa_incidencias_tecnicas',
+            'tiempo_inactividad_acumulado',
+            'costo_mto_reactivo_acumulado',
+            'ubicacion_activo',
+            'tipo_equipo'
         ]
-        self._target_names = ['Estado_Integridad_Hardware', 'Nivel_Riesgo_Operativo']
+        self._target_names = ['estado_integridad_hardware', 'nivel_riesgo_operativo']
     
     def encode_categorical(self, df, fit=True):
         """Label encode categorical variables (Ubicacion_Activo, Tipo_Equipo).
@@ -32,7 +33,7 @@ class Preprocessor:
         """
         df = df.copy()
         
-        categorical_columns = ['Ubicacion_Activo', 'Tipo_Equipo']
+        categorical_columns = ['ubicacion_activo', 'tipo_equipo']
         
         for col in categorical_columns:
             if fit:
@@ -46,7 +47,7 @@ class Preprocessor:
         return df
     
     def encode_target(self, df, fit=True):
-        """Encode Estado_Integridad_Hardware (target) using LabelEncoder.
+        """Encode Estado_Integridad_Hardware (target) using OrdinalEncoder.
         
         Args:
             df: DataFrame containing the target column
@@ -57,14 +58,42 @@ class Preprocessor:
         """
         df = df.copy()
         
+        orden_estado = [['Excelente', 'Bueno', 'Regular', 'Critico']]
+        
         if fit:
-            self.target_encoder = LabelEncoder()
-            df['Estado_Integridad_Hardware_encoded'] = self.target_encoder.fit_transform(
-                df['Estado_Integridad_Hardware'].astype(str)
+            self.target_encoder = OrdinalEncoder(categories=orden_estado)
+            df['estado_integridad_hardware_encoded'] = self.target_encoder.fit_transform(
+                df[['estado_integridad_hardware']]
             )
         else:
-            df['Estado_Integridad_Hardware_encoded'] = self.target_encoder.transform(
-                df['Estado_Integridad_Hardware'].astype(str)
+            df['estado_integridad_hardware_encoded'] = self.target_encoder.transform(
+                df[['estado_integridad_hardware']]
+            )
+        
+        return df
+    
+    def encode_risk_target(self, df, fit=True):
+        """Encode Nivel_Riesgo_Operativo (target) using OrdinalEncoder.
+        
+        Args:
+            df: DataFrame containing the risk target column
+            fit: If True, fit the encoder and transform. If False, only transform.
+        
+        Returns:
+            DataFrame with encoded risk target column
+        """
+        df = df.copy()
+        
+        orden_riesgo = [['Bajo', 'Medio', 'Alto', 'Critico']]
+        
+        if fit:
+            self.risk_encoder = OrdinalEncoder(categories=orden_riesgo)
+            df['nivel_riesgo_operativo_encoded'] = self.risk_encoder.fit_transform(
+                df[['nivel_riesgo_operativo']]
+            )
+        else:
+            df['nivel_riesgo_operativo_encoded'] = self.risk_encoder.transform(
+                df[['nivel_riesgo_operativo']]
             )
         
         return df
@@ -97,17 +126,17 @@ class Preprocessor:
             Tuple of (features DataFrame, targets DataFrame)
         """
         feature_cols = [
-            'Vida_Util_Consumida',
-            'Tasa_Incidencias_Tecnicas',
-            'Tiempo_Inactividad_Acumulado',
-            'Costo_Mto_Reactivo_Acumulado',
-            'Ubicacion_Activo_encoded',
-            'Tipo_Equipo_encoded'
+            'vida_util_consumida',
+            'tasa_incidencias_tecnicas',
+            'tiempo_inactividad_acumulado',
+            'costo_mto_reactivo_acumulado',
+            'ubicacion_activo_encoded',
+            'tipo_equipo_encoded'
         ]
         
         target_cols = [
-            'Estado_Integridad_Hardware_encoded',
-            'Nivel_Riesgo_Operativo_encoded'
+            'estado_integridad_hardware_encoded',
+            'nivel_riesgo_operativo_encoded',
         ]
         
         features = df[feature_cols].copy()

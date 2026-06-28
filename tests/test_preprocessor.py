@@ -15,12 +15,12 @@ def preprocessor():
 def feature_df():
     """Minimal feature DataFrame for encoding tests."""
     return pd.DataFrame({
-        "Vida_Util_Consumida": [10.0, 50.0, 90.0],
-        "Tasa_Incidencias_Tecnicas": [0, 3, 7],
-        "Tiempo_Inactividad_Acumulado": [10.0, 100.0, 400.0],
-        "Costo_Mto_Reactivo_Acumulado": [20.0, 150.0, 350.0],
-        "Ubicacion_Activo": ["UDLAPARK", "GRANADOS", "COLON"],
-        "Tipo_Equipo": ["Computadora", "Servidor", "Router"],
+        "vida_util_consumida": [10.0, 50.0, 90.0],
+        "tasa_incidencias_tecnicas": [0, 3, 7],
+        "tiempo_inactividad_acumulado": [10.0, 100.0, 400.0],
+        "costo_mto_reactivo_acumulado": [20.0, 150.0, 350.0],
+        "ubicacion_activo": ["UDLAPARK", "GRANADOS", "COLON"],
+        "tipo_equipo": ["Computadora", "Servidor", "Router"],
     })
 
 
@@ -28,22 +28,22 @@ def feature_df():
 def target_df():
     """Minimal target DataFrame for encoding tests."""
     return pd.DataFrame({
-        "Estado_Integridad_Hardware": ["Excelente", "Regular", "Crítico"],
+        "estado_integridad_hardware": ["Excelente", "Regular", "Critico"],
     })
 
 
 class TestEncodeCategorical:
-    """Verify categorical encoding for Ubicacion_Activo and Tipo_Equipo."""
+    """Verify categorical encoding for ubicacion_activo and tipo_equipo."""
 
     def test_creates_encoded_columns(self, preprocessor, feature_df):
         result = preprocessor.encode_categorical(feature_df, fit=True)
-        assert "Ubicacion_Activo_encoded" in result.columns
-        assert "Tipo_Equipo_encoded" in result.columns
+        assert "ubicacion_activo_encoded" in result.columns
+        assert "tipo_equipo_encoded" in result.columns
 
     def test_encoded_values_are_numeric(self, preprocessor, feature_df):
         result = preprocessor.encode_categorical(feature_df, fit=True)
-        assert result["Ubicacion_Activo_encoded"].dtype in [np.int32, np.int64, np.intp]
-        assert result["Tipo_Equipo_encoded"].dtype in [np.int32, np.int64, np.intp]
+        assert result["ubicacion_activo_encoded"].dtype.kind in ['i', 'f', 'u']
+        assert result["tipo_equipo_encoded"].dtype.kind in ['i', 'f', 'u']
 
     def test_transform_without_fit_raises(self, preprocessor, feature_df):
         with pytest.raises(KeyError):
@@ -52,7 +52,7 @@ class TestEncodeCategorical:
     def test_transform_after_fit_consistent(self, preprocessor, feature_df):
         preprocessor.encode_categorical(feature_df, fit=True)
         result2 = preprocessor.encode_categorical(feature_df, fit=False)
-        assert "Ubicacion_Activo_encoded" in result2.columns
+        assert "ubicacion_activo_encoded" in result2.columns
 
     def test_does_not_modify_original(self, preprocessor, feature_df):
         original_cols = list(feature_df.columns)
@@ -61,21 +61,21 @@ class TestEncodeCategorical:
 
 
 class TestEncodeTarget:
-    """Verify target encoding for Estado_Integridad_Hardware."""
+    """Verify target encoding for estado_integridad_hardware."""
 
     def test_creates_encoded_target(self, preprocessor, target_df):
         result = preprocessor.encode_target(target_df, fit=True)
-        assert "Estado_Integridad_Hardware_encoded" in result.columns
+        assert "estado_integridad_hardware_encoded" in result.columns
 
     def test_encoded_target_is_numeric(self, preprocessor, target_df):
         result = preprocessor.encode_target(target_df, fit=True)
-        assert result["Estado_Integridad_Hardware_encoded"].dtype in [np.int32, np.int64, np.intp]
+        assert result["estado_integridad_hardware_encoded"].dtype.kind in ['i', 'f', 'u']
 
     def test_inverse_transform_recovers_labels(self, preprocessor, target_df):
         result = preprocessor.encode_target(target_df, fit=True)
-        encoded = result["Estado_Integridad_Hardware_encoded"].values
+        encoded = result[["estado_integridad_hardware_encoded"]].values
         decoded = preprocessor.target_encoder.inverse_transform(encoded)
-        assert list(decoded) == list(target_df["Estado_Integridad_Hardware"])
+        assert list(decoded.flatten()) == list(target_df["estado_integridad_hardware"])
 
 
 class TestEncodeRiskLevel:
