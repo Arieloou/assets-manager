@@ -1,147 +1,110 @@
-"""End-to-end integration test: load CSV → preprocess → train → predict → evaluate."""
+"""End-to-end integration test: load → preprocess → train → predict → evaluate."""
 
 import pytest
-import pandas as pd
-import numpy as np
+
+from features.config import get_risk_levels
 from features.data import DataLoader, Preprocessor
 from features.model import ModelTrainer, ModelPredictor, ModelEvaluator
 from features.monitoring.data_drift import DataDriftDetector
 
 
 class TestEndToEndPipeline:
-    """Full pipeline integration test without database."""
-
-    def test_full_pipeline(self, sample_pascal_df):
+    def test_full_pipeline(self, sample_equipos_df):
         # 1. Load and validate
         loader = DataLoader()
-        assert loader.validate_schema(sample_pascal_df)
+        assert loader.validate_schema(sample_equipos_df)
 
-        # 2. Extract features and targets
-        features = loader.get_features(sample_pascal_df)
-        targets = loader.get_targets(sample_pascal_df)
-        assert len(features) == len(sample_pascal_df)
-        assert "estado_integridad_hardware" in targets.columns
+        # 2. Extract features and target
+        features = loader.get_features(sample_equipos_df)
+        targets = loader.get_targets(sample_equipos_df)
+        assert len(features) == len(sample_equipos_df)
+        assert "operational_risk_level" in targets.columns
 
-        # 3. Preprocess
+        # 3. Preprocess (date features + encoders)
         preprocessor = Preprocessor()
-        X = preprocessor.encode_categorical(features.copy(), fit=True)
-        y = preprocessor.encode_target(
-            targets.copy()[["estado_integridad_hardware"]], fit=True
-        )
-        y_riesgo = preprocessor.encode_risk_target(
-            targets.copy()[["nivel_riesgo_operativo"]], fit=True
-        )
-
-        feature_cols = [
-            "vida_util_consumida", "tasa_incidencias_tecnicas",
-            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
-            "ubicacion_activo_encoded", "tipo_equipo_encoded",
-        ]
-        X_ready = X[feature_cols]
-        y_ready = y["estado_integridad_hardware_encoded"]
-        y_riesgo_ready = y_riesgo["nivel_riesgo_operativo_encoded"]
+        X = preprocessor.build_features(features, fit=True)
+        y = preprocessor.encode_target(targets, fit=True)
+        assert not X.isna().any().any()
 
         # 4. Cross-validate
         trainer = ModelTrainer()
-        cv_results = trainer.cross_validate(X_ready, y_ready, k=5)
-        assert 0.0 <= cv_results["mean_accuracy"] <= 1.0
-        assert len(cv_results["fold_scores"]) == 5
+        cv = trainer.cross_validate(X, y, k=5)
+        assert 0.0 <= cv["mean_accuracy"] <= 1.0
+        assert len(cv["fold_scores"]) == 5
 
         # 5. Train
-        trainer.train(X_ready, y_ready)
+        trainer.train(X, y)
         assert trainer._feature_importances is not None
-
-        # Train risk model
-        trainer_risk = ModelTrainer()
-        trainer_risk.train_risk(X_ready, y_riesgo_ready)
 
         # 6. Feature importance
         importance = trainer.get_feature_importance()
-        assert len(importance) == 6
+        assert set(importance.keys()) == set(preprocessor.get_feature_names())
         assert abs(sum(importance.values()) - 1.0) < 0.01
 
-        # 7. Predict single sample
-        predictor = ModelPredictor(trainer.model, preprocessor, trainer_risk.model)
-        estado, riesgo = predictor.predict({
-            "vida_util_consumida": 60.0,
-            "tasa_incidencias_tecnicas": 5,
-            "tiempo_inactividad_acumulado": 200.0,
-            "costo_mto_reactivo_acumulado": 250.0,
-            "ubicacion_activo": "GRANADOS",
-            "tipo_equipo": "Servidor",
-        })
-        assert estado in ["Excelente", "Bueno", "Regular", "Critico"]
-        assert riesgo in ["Bajo", "Medio", "Alto", "Critico"]
+        # 7. Predict single sample + soft output
+        predictor = ModelPredictor(trainer, preprocessor)
+        sample = {
+            "device_brand": "Epson",
+            "device_type": "Proyector",
+            "hardware_integrity_status": "Malo",
+            "headquarters_location": "Granados",
+            "acquisition_date": "01/06/2020",
+            "technical_incident_rate": 8,
+            "last_reactive_maintenance_date": None,
+            "last_preventive_maintenance_date": "01/01/2024",
+        }
+        risk = predictor.predict(sample)
+        assert risk in get_risk_levels()
+        proba = predictor.predict_proba(sample)
+        assert abs(sum(proba.values()) - 1.0) < 0.01
 
         # 8. Predict batch
         batch_result = predictor.predict_batch(features.copy())
         assert len(batch_result) == len(features)
-        assert "estado_integridad_hardware" in batch_result.columns
-        assert "nivel_riesgo_operativo" in batch_result.columns
+        assert "operational_risk_level" in batch_result.columns
 
-        # 9. Evaluate
-        evaluator = ModelEvaluator(trainer.model, preprocessor)
-        y_true = targets["estado_integridad_hardware"].tolist()
-        y_pred = batch_result["estado_integridad_hardware"].tolist()
-        cm = evaluator.confusion_matrix(y_true, y_pred)
-        assert cm.shape == (4, 4)
-        acc = evaluator.accuracy_score(y_true, y_pred)
-        assert 0.0 <= acc <= 1.0
+        # 9. Evaluate (classification report + accuracy)
+        evaluator = ModelEvaluator(trainer, preprocessor)
+        y_true = targets["operational_risk_level"].tolist()
+        y_pred = batch_result["operational_risk_level"].tolist()
+        report = evaluator.classification_report(y_true, y_pred)
+        assert "accuracy" in report
+        assert 0.0 <= evaluator.accuracy_score(y_true, y_pred) <= 1.0
 
-        # 10. Data drift (baseline vs same data — no drift expected)
-        baseline_features = features[["vida_util_consumida", "costo_mto_reactivo_acumulado"]]
-        detector = DataDriftDetector(baseline_features)
-        drift_results = detector.check_drift(baseline_features)
-        for key, result in drift_results.items():
-            assert result["drift_detected"] == False
+        # 10. Data drift (same data -> no drift)
+        detector = DataDriftDetector(sample_equipos_df)
+        for result in detector.check_drift(sample_equipos_df).values():
+            assert result["drift_detected"] is False
 
-    def test_save_load_predict_consistency(self, sample_pascal_df, tmp_path):
-        """Train, save, load, and verify predictions match."""
+    def test_save_load_predict_consistency(self, sample_equipos_df, tmp_path):
         loader = DataLoader()
         preprocessor = Preprocessor()
-        features = loader.get_features(sample_pascal_df)
-        targets = loader.get_targets(sample_pascal_df)
+        features = loader.get_features(sample_equipos_df)
+        targets = loader.get_targets(sample_equipos_df)
 
-        X = preprocessor.encode_categorical(features.copy(), fit=True)
-        y = preprocessor.encode_target(
-            targets.copy()[["estado_integridad_hardware"]], fit=True
-        )
-        y_riesgo = preprocessor.encode_risk_target(
-            targets.copy()[["nivel_riesgo_operativo"]], fit=True
-        )
-        feature_cols = [
-            "vida_util_consumida", "tasa_incidencias_tecnicas",
-            "tiempo_inactividad_acumulado", "costo_mto_reactivo_acumulado",
-            "ubicacion_activo_encoded", "tipo_equipo_encoded",
-        ]
+        X = preprocessor.build_features(features, fit=True)
+        y = preprocessor.encode_target(targets, fit=True)
 
-        # Train and predict
         trainer = ModelTrainer()
-        trainer.train(X[feature_cols], y["estado_integridad_hardware_encoded"])
-        
-        trainer_risk = ModelTrainer()
-        trainer_risk.train_risk(X[feature_cols], y_riesgo["nivel_riesgo_operativo_encoded"])
-        
-        predictor = ModelPredictor(trainer.model, preprocessor, trainer_risk.model)
+        trainer.train(X, y)
+        predictor = ModelPredictor(trainer, preprocessor)
 
-        sample_input = {
-            "vida_util_consumida": 30.0,
-            "tasa_incidencias_tecnicas": 1,
-            "tiempo_inactividad_acumulado": 50.0,
-            "costo_mto_reactivo_acumulado": 80.0,
-            "ubicacion_activo": "COLON",
-            "tipo_equipo": "Router",
+        sample = {
+            "device_brand": "HP",
+            "device_type": "Computadora de Escritorio",
+            "hardware_integrity_status": "Bueno",
+            "headquarters_location": "Colon",
+            "acquisition_date": "01/01/2021",
+            "technical_incident_rate": 1,
+            "last_reactive_maintenance_date": "01/01/2025",
+            "last_preventive_maintenance_date": "01/06/2024",
         }
-        original_pred = predictor.predict(sample_input)
+        original_pred = predictor.predict(sample)
 
-        # Save and reload
         model_path = tmp_path / "model.joblib"
         trainer.save_model(str(model_path))
         new_trainer = ModelTrainer()
         new_trainer.load_model(str(model_path))
-        new_predictor = ModelPredictor(new_trainer.model, preprocessor, trainer_risk.model)
+        loaded_pred = ModelPredictor(new_trainer, preprocessor).predict(sample)
 
-        loaded_pred = new_predictor.predict(sample_input)
-
-        # Predictions should be identical
         assert original_pred == loaded_pred

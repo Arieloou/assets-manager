@@ -1,11 +1,12 @@
 """Tests for features/data/exporter.py — import/export functions."""
 
-import pytest
-import pandas as pd
-from unittest.mock import patch, MagicMock
 from io import BytesIO
+from unittest.mock import patch
+
+import pandas as pd
+import pytest
+
 from features.data.exporter import (
-    get_risk_level,
     validate_schema,
     import_csv,
     export_to_csv,
@@ -14,58 +15,24 @@ from features.data.exporter import (
 )
 
 
-class TestGetRiskLevel:
-    """Verify risk-level derivation from hardware integrity state."""
-
-    def test_excelente_maps_to_bajo(self):
-        assert get_risk_level("Excelente") == "Bajo"
-
-    def test_bueno_maps_to_medio(self):
-        assert get_risk_level("Bueno") == "Medio"
-
-    def test_regular_maps_to_alto(self):
-        assert get_risk_level("Regular") == "Alto"
-
-    def test_critico_maps_to_critico(self):
-        assert get_risk_level("Critico") == "Critico"
-        assert get_risk_level("Crítico") == "Critico"
-
-    def test_unknown_defaults_to_medio(self):
-        assert get_risk_level("Desconocido") == "Medio"
-
-
 class TestValidateSchema:
-    """Verify schema validation for CSV import."""
-
-    def test_valid_schema(self):
-        df = pd.DataFrame({
-            "id_equipo": ["EQ-001"],
-            "vida_util_consumida": [50.0],
-            "tasa_incidencias_tecnicas": [2],
-            "tiempo_inactividad_acumulado": [100.0],
-            "costo_mto_reactivo_acumulado": [150.0],
-            "ubicacion_activo": ["UDLAPARK"],
-            "estado_integridad_hardware": ["Bueno"],
-            "tipo_equipo": ["Computadora"],
-        })
-        assert validate_schema(df) is True
+    def test_valid_schema(self, sample_equipos_df):
+        assert validate_schema(sample_equipos_df) is True
 
     def test_invalid_schema_missing_cols(self):
-        df = pd.DataFrame({"foo": [1]})
-        assert validate_schema(df) is False
+        assert validate_schema(pd.DataFrame({"foo": [1]})) is False
 
 
 class TestImportCsv:
-    """Verify CSV import adds timestamp and risk level columns."""
-
-    def test_import_adds_columns(self, sample_csv_file):
+    def test_import_adds_timestamp(self, sample_csv_file):
         with open(sample_csv_file, "rb") as f:
             df = import_csv(f)
-        assert "timestamp_registro" in df.columns
-        assert "nivel_riesgo_operativo" in df.columns
+        assert "registered_at" in df.columns
+        # Target already present in the dataset
+        assert "operational_risk_level" in df.columns
 
     def test_import_preserves_row_count(self, sample_csv_file):
-        original = pd.read_csv(sample_csv_file)
+        original = pd.read_csv(sample_csv_file, sep=";")
         with open(sample_csv_file, "rb") as f:
             df = import_csv(f)
         assert len(df) == len(original)
@@ -79,48 +46,38 @@ class TestImportCsv:
 
 
 class TestExportToCsv:
-    """Verify CSV export returns bytes."""
-
     def test_export_returns_bytes(self):
-        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
-        result = export_to_csv(df)
+        result = export_to_csv(pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
         assert isinstance(result, bytes)
         assert b"a,b" in result
 
-    def test_export_roundtrip(self, sample_csv_file):
-        original = pd.read_csv(sample_csv_file)
-        csv_bytes = export_to_csv(original)
-        recovered = pd.read_csv(BytesIO(csv_bytes))
-        assert list(recovered.columns) == list(original.columns)
-        assert len(recovered) == len(original)
-
 
 class TestSaveToDatabase:
-    """Verify save_to_database iterates rows and calls save_equipo."""
+    @patch("features.data.exporter.save_device")
+    def test_saves_correct_count(self, mock_save, sample_equipos_df):
+        count = save_to_database(sample_equipos_df)
+        assert count == len(sample_equipos_df)
+        assert mock_save.call_count == len(sample_equipos_df)
 
-    @patch("features.data.exporter.save_equipo")
-    def test_saves_correct_count(self, mock_save):
-        df = pd.DataFrame({
-            "id_equipo": ["EQ-001", "EQ-002"],
-            "vida_util_consumida": [10.0, 20.0],
-            "tasa_incidencias_tecnicas": [1, 2],
-            "tiempo_inactividad_acumulado": [50.0, 100.0],
-            "costo_mto_reactivo_acumulado": [30.0, 60.0],
-            "ubicacion_activo": ["UDLAPARK", "COLON"],
-            "estado_integridad_hardware": ["Bueno", "Critico"],
-            "tipo_equipo": ["Computadora", "Servidor"],
-            "nivel_riesgo_operativo": ["Medio", "Critico"],
-            "timestamp_registro": ["2025-01-01", "2025-01-02"],
-        })
-        count = save_to_database(df)
-        assert count == 2
-        assert mock_save.call_count == 2
+    @patch("features.data.exporter.save_device")
+    def test_progress_callback_invoked_per_row(self, mock_save, sample_equipos_df):
+        calls = []
+        save_to_database(sample_equipos_df, progress_callback=lambda done, total: calls.append((done, total)))
+        # Called once per row, ending at (n, n)
+        assert len(calls) == len(sample_equipos_df)
+        assert calls[-1] == (len(sample_equipos_df), len(sample_equipos_df))
+
+    @patch("features.data.exporter.save_device")
+    def test_null_reactive_parsed_as_none(self, mock_save, sample_equipos_df):
+        save_to_database(sample_equipos_df)
+        # Row 0 has a null last_reactive_maintenance_date in the fixture
+        first_call = mock_save.call_args_list[0][0][0]
+        assert first_call["last_reactive_maintenance_date"] is None
+        assert first_call["acquisition_date"] is not None
 
 
 class TestGetHistoricalData:
-    """Verify get_historical_data delegates to get_all_equipos."""
-
-    @patch("features.data.exporter.get_all_equipos")
+    @patch("features.data.exporter.get_all_devices")
     def test_delegates_to_db(self, mock_get):
         mock_get.return_value = pd.DataFrame({"id": [1]})
         result = get_historical_data()

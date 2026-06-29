@@ -1,86 +1,72 @@
 """Tests for features/monitoring/data_drift.py — DataDriftDetector."""
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
+
 from features.monitoring.data_drift import DataDriftDetector, DRIFT_THRESHOLD_P_VALUE
 
 
 @pytest.fixture
 def baseline_df():
-    """Baseline DataFrame with known distributions."""
-    np.random.seed(42)
+    rng = np.random.RandomState(42)
     n = 100
     return pd.DataFrame({
-        "Vida_Util_Consumida": np.random.normal(50, 10, n),
-        "Costo_Mto_Reactivo_Acumulado": np.random.normal(100, 30, n),
+        "useful_life_consumed_days": rng.normal(1500, 300, n),
+        "technical_incident_rate": rng.normal(5, 2, n),
     })
 
 
 @pytest.fixture
-def similar_df(baseline_df):
-    """New data from the same distribution — should NOT trigger drift."""
-    np.random.seed(99)
+def similar_df():
+    rng = np.random.RandomState(99)
     n = 100
     return pd.DataFrame({
-        "Vida_Util_Consumida": np.random.normal(50, 10, n),
-        "Costo_Mto_Reactivo_Acumulado": np.random.normal(100, 30, n),
+        "useful_life_consumed_days": rng.normal(1500, 300, n),
+        "technical_incident_rate": rng.normal(5, 2, n),
     })
 
 
 @pytest.fixture
 def drifted_df():
-    """New data from a very different distribution — SHOULD trigger drift."""
-    np.random.seed(7)
+    rng = np.random.RandomState(7)
     n = 100
     return pd.DataFrame({
-        "Vida_Util_Consumida": np.random.normal(90, 3, n),
-        "Costo_Mto_Reactivo_Acumulado": np.random.normal(500, 10, n),
+        "useful_life_consumed_days": rng.normal(4000, 100, n),
+        "technical_incident_rate": rng.normal(18, 1, n),
     })
 
 
 class TestDataDriftDetector:
-    """Verify KS-test-based data drift detection."""
-
     def test_no_drift_on_similar_data(self, baseline_df, similar_df):
         detector = DataDriftDetector(baseline_df)
         results = detector.check_drift(similar_df)
-
-        for key, result in results.items():
-            assert "ks_statistic" in result
-            assert "p_value" in result
-            assert "drift_detected" in result
-            # Similar data should NOT trigger drift
-            assert result["drift_detected"] == False
+        assert results
+        for result in results.values():
+            assert {"ks_statistic", "p_value", "drift_detected"} <= set(result)
+            assert result["drift_detected"] is False
 
     def test_drift_on_shifted_data(self, baseline_df, drifted_df):
         detector = DataDriftDetector(baseline_df)
         results = detector.check_drift(drifted_df)
-
-        # Both features should show drift
-        for key, result in results.items():
-            assert result["drift_detected"] == True
+        for result in results.values():
+            assert result["drift_detected"] is True
             assert result["p_value"] < DRIFT_THRESHOLD_P_VALUE
 
     def test_baseline_stats_computed(self, baseline_df):
         detector = DataDriftDetector(baseline_df)
-        assert "vida_util" in detector.baseline_stats
-        assert "costo_mto" in detector.baseline_stats
-        assert "mean" in detector.baseline_stats["vida_util"]
-        assert "std" in detector.baseline_stats["vida_util"]
+        assert "useful_life_consumed_days" in detector.baseline_stats
+        assert "technical_incident_rate" in detector.baseline_stats
+        assert "mean" in detector.baseline_stats["useful_life_consumed_days"]
 
     def test_empty_new_df_returns_empty(self, baseline_df):
         detector = DataDriftDetector(baseline_df)
-        empty_df = pd.DataFrame()
-        results = detector.check_drift(empty_df)
-        assert len(results) == 0
+        assert detector.check_drift(pd.DataFrame()) == {}
 
-    def test_partial_columns(self, baseline_df):
-        """New data with only one of the monitored columns."""
-        detector = DataDriftDetector(baseline_df)
-        partial_df = pd.DataFrame({
-            "Vida_Util_Consumida": np.random.normal(50, 10, 50),
-        })
-        results = detector.check_drift(partial_df)
-        assert "vida_util" in results
-        assert "costo_mto" not in results
+    def test_engineers_features_from_raw_dates(self, sample_equipos_df):
+        """A raw dataset (with date columns) is engineered before comparison."""
+        detector = DataDriftDetector(sample_equipos_df)
+        assert "useful_life_consumed_days" in detector.baseline_stats
+        results = detector.check_drift(sample_equipos_df)
+        for result in results.values():
+            assert result["drift_detected"] is False

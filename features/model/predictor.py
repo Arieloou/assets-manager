@@ -1,112 +1,70 @@
 import pandas as pd
-import numpy as np
-from features.data.preprocessor import Preprocessor
+
+from features.config import get_risk_levels
 
 
 class ModelPredictor:
-    """Model predictor for hardware integrity and operational risk prediction."""
-    
+    """Predicts ``operational_risk_level`` and its confidence (soft output)."""
+
     def __init__(self, model, preprocessor):
-        """Initialize the predictor with a trained model and preprocessor.
-        
+        """Initialize with a trained model and a fitted preprocessor.
+
         Args:
-            model: Trained multi-output model with predict method
-            preprocessor: Preprocessor instance for feature preprocessing
+            model: Object with ``predict``/``predict_proba`` (ModelTrainer or
+                a raw sklearn pipeline).
+            preprocessor: Fitted ``Preprocessor`` instance.
         """
         self.model = model
         self.preprocessor = preprocessor
-    
-    def _prepare_single_sample(self, input_dict):
-        """Convert input dict to a DataFrame ready for prediction.
-        
-        Args:
-            input_dict: Dictionary with feature values
-            
-        Returns:
-            DataFrame with preprocessed features
-        """
-        df = pd.DataFrame([input_dict])
-        df = self.preprocessor.encode_categorical(df, fit=False)
-        feature_cols = [
-            'vida_util_consumida',
-            'tasa_incidencias_tecnicas',
-            'tiempo_inactividad_acumulado',
-            'costo_mto_reactivo_acumulado',
-            'ubicacion_activo_encoded',
-            'tipo_equipo_encoded'
-        ]
-        return df[feature_cols]
-    
+
+    def _prepare(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Build the encoded feature matrix for the given raw rows."""
+        return self.preprocessor.build_features(df, fit=False)
+
     def predict(self, input_dict):
-        """Predict single sample and return hardware integrity and risk level.
-        
+        """Predict the operational risk level for a single device record.
+
         Args:
-            input_dict: Dictionary with keys:
-                - vida_util_consumida (float)
-                - tasa_incidencias_tecnicas (int)
-                - tiempo_inactividad_acumulado (float)
-                - costo_mto_reactivo_acumulado (float)
-                - ubicacion_activo (string)
-                - tipo_equipo (string)
-                
+            input_dict: Raw feature values (acquisition_date,
+                technical_incident_rate, last_reactive_maintenance_date,
+                last_preventive_maintenance_date, hardware_integrity_status,
+                headquarters_location, device_type, device_brand).
+
         Returns:
-            Tuple of (Estado_Integridad_Hardware, Nivel_Riesgo_Operativo)
+            The predicted ``operational_risk_level`` label (string).
         """
-        X = self._prepare_single_sample(input_dict)
-        
-        predictions = self.model.predict(X)[0]
-        estado_encoded = predictions[0]
-        riesgo_encoded = predictions[1]
-        
-        estado_integridad = self.preprocessor.target_encoder.inverse_transform([[estado_encoded]])[0][0]
-        riesgo = self.preprocessor.risk_encoder.inverse_transform([[riesgo_encoded]])[0][0]
-        
-        return (estado_integridad, riesgo)
-    
+        X = self._prepare(pd.DataFrame([input_dict]))
+        encoded = self.model.predict(X)[0]
+        return self.preprocessor.decode_target([encoded])[0]
+
     def predict_proba(self, input_dict):
-        """Return prediction probabilities for each class.
-        
+        """Return the soft output: vote proportion per risk level.
+
         Args:
-            input_dict: Dictionary with feature values
-            
+            input_dict: Raw feature values for a single record.
+
         Returns:
-            Array of prediction probabilities for each class
+            Dict ``{nivel_riesgo: proporcion}`` ordered low -> high risk, where
+            the proportions sum to ~1.0 (interpreted as prediction confidence).
         """
-        X = self._prepare_single_sample(input_dict)
-        return self.model.predict_proba(X)[0]
-    
-    def predict_batch(self, df):
-        """Predict on a DataFrame and return DataFrame with predictions added.
-        
-        Args:
-            df: DataFrame with feature columns
-        
-        Returns:
-            DataFrame with original data plus predictions:
-                - estado_integridad_hardware
-                - nivel_riesgo_operativo
+        X = self._prepare(pd.DataFrame([input_dict]))
+        proba = self.model.predict_proba(X)[0]
+
+        # Map model class indices (encoded ordinals) back to risk labels.
+        classes = self.model.classes_
+        labels = self.preprocessor.decode_target(classes)
+        proba_by_label = dict(zip(labels, proba))
+
+        # Return ordered by the configured risk order, filling missing classes.
+        return {level: float(proba_by_label.get(level, 0.0)) for level in get_risk_levels()}
+
+    def predict_batch(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Predict risk levels for a DataFrame of raw records.
+
+        Returns the input DataFrame with an ``operational_risk_level`` column.
         """
         df = df.copy()
-        
-        df = self.preprocessor.encode_categorical(df, fit=False)
-        feature_cols = [
-            'vida_util_consumida',
-            'tasa_incidencias_tecnicas',
-            'tiempo_inactividad_acumulado',
-            'costo_mto_reactivo_acumulado',
-            'ubicacion_activo_encoded',
-            'tipo_equipo_encoded'
-        ]
-        X = df[feature_cols]
-        
-        predictions = self.model.predict(X)
-        estados_encoded = predictions[:, 0]
-        riesgos_encoded = predictions[:, 1]
-        
-        estados_integridad = self.preprocessor.target_encoder.inverse_transform(estados_encoded.reshape(-1, 1))
-        riesgos = self.preprocessor.risk_encoder.inverse_transform(riesgos_encoded.reshape(-1, 1))
-        
-        df['estado_integridad_hardware'] = estados_integridad
-        df['nivel_riesgo_operativo'] = riesgos
-        
+        X = self._prepare(df)
+        encoded = self.model.predict(X)
+        df['operational_risk_level'] = self.preprocessor.decode_target(encoded)
         return df

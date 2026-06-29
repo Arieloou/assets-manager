@@ -1,6 +1,31 @@
-# Sistema de Predicción de Fallos en Equipos Electrónicos
+# Sistema de Predicción de Riesgo Operativo en Equipos Electrónicos
 
-Sistema de monitoreo y predicción de estado de integridad de equipos electrónicos utilizando Random Forest.
+Sistema de monitoreo y predicción del **nivel de riesgo operativo** de equipos electrónicos
+utilizando Random Forest.
+
+## Modelo Random Forest
+
+- **Target (salida única):** `operational_risk_level` — 5 clases ordinales
+  (`Muy Bajo < Bajo < Medio < Alto < Muy Alto`), codificado con `OrdinalEncoder`.
+- **Features de entrada:**
+  1. `device_brand` (`HP`, `Dell`, `Epson`, `NEC`, `Canon`) — `OneHotEncoder`.
+  2. `device_type` (`Computadora de Escritorio`, `Laptop`, `Proyector`, `Impresora`) — `OneHotEncoder`.
+  3. `hardware_integrity_status` — `OrdinalEncoder`
+     (`Excelente > Bueno > Desgastado > Malo > Crítico`).
+  4. `headquarters_location` (`Park`, `Granados`, `Colon`) — `OneHotEncoder`.
+  5. `useful_life_consumed_days` — días desde `acquisition_date` hasta hoy — `StandardScaler`.
+  6. `technical_incident_rate` — cantidad de incidencias reportadas — `StandardScaler`.
+  7. `days_since_last_corrective_maintenance` — días desde el último mantenimiento correctivo
+     (si nunca hubo, equivale a `useful_life_consumed_days`) — `StandardScaler`.
+  8. `days_since_last_preventive_maintenance` — días desde el último mantenimiento preventivo — `StandardScaler`.
+- **Escalado:** `StandardScaler` aplicado a las **4 features cuantitativas**
+  (`useful_life_consumed_days`, `technical_incident_rate`,
+  `days_since_last_corrective_maintenance`, `days_since_last_preventive_maintenance`) dentro del
+  `Preprocessor`; el modelo es un `RandomForestClassifier` puro (`random_classifier_model`).
+- **Soft Output:** además de la clase predicha, el modelo devuelve la proporción de votos por
+  nivel de riesgo (`predict_proba`), interpretada como la confianza de la predicción.
+- **Evaluación:** `confusion_matrix` (5×5, filas = real / columnas = predicho) y
+  `classification_report` (precision / recall / F1) mostrados en tarjetas.
 
 ## Requisitos
 
@@ -94,10 +119,11 @@ project/
 - Gráfico de dona por ubicación
 - Sistema de filtros dinámicos
 - Importación/Exportación CSV
-- Predicción con Random Forest
+- Predicción de nivel de riesgo operativo con Random Forest
+- Soft Output (proporción de votos / confianza por nivel de riesgo)
 - Cross-validation (k≥5)
 - Feature importance
-- Monitoreo de Data Drift
+- Monitoreo de Data Drift (sobre features derivadas)
 - Matriz de confusión dinámica
-- Sistema de alertas tempranas
+- Sistema de alertas tempranas (riesgo Alto / Muy Alto)
 - Arquitectura basada en características

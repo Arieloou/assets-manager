@@ -1,4 +1,5 @@
 import yaml
+import pandas as pd
 import streamlit as st
 from pathlib import Path
 from typing import Any, Dict
@@ -35,17 +36,14 @@ def get_cookie_config() -> Dict[str, Any]:
 def get_model_params() -> Dict[str, Any]:
     return load_config()["model_params"]
 
-def get_vida_util_params() -> Dict[str, list]:
-    return load_config()["vida_util_params"]
-
-def get_incidencias_lambda() -> Dict[str, int]:
-    return load_config()["incidencias_lambda"]
-
-def get_costo_params() -> Dict[str, list]:
-    return load_config()["costo_params"]
+def get_useful_life_params() -> Dict[str, list]:
+    return load_config()["useful_life_params"]
 
 def get_locations() -> list:
     return load_config()["locations"]
+
+def get_brands() -> list:
+    return load_config()["brands"]
 
 def get_hardware_states() -> list:
     return load_config()["hardware_states"]
@@ -53,5 +51,9 @@ def get_hardware_states() -> list:
 def get_risk_levels() -> list:
     return load_config()["risk_levels"]
 
-def get_equipment_types() -> list:
-    return load_config()["equipment_types"]
+def get_device_types() -> list:
+    return load_config()["device_types"]
+
+def get_reference_date() -> "pd.Timestamp":
+    """Reference 'today' used to derive day-difference features."""
+    return pd.Timestamp.today().normalize()

@@ -1,4 +1,6 @@
 import streamlit as st
+# pyrefly: ignore [missing-import]
+import plotly.express as px
 import pandas as pd
 import numpy as np
 import time
@@ -24,11 +26,11 @@ if "baseline_df" not in st.session_state:
     st.session_state["baseline_df"] = None
 
 from features.auth.login import authenticate_user, require_auth
-from features.config import load_config, get_locations, get_hardware_states, get_equipment_types
-from features.database import init_db, get_all_equipos, save_prediction, get_predictions_history, get_active_model, save_trained_model
+from features.config import load_config, get_locations, get_hardware_states, get_device_types, get_brands, get_risk_levels
+from features.database import init_db, get_all_devices, save_prediction, get_predictions_history, save_trained_model
 from features.data import DataLoader, Preprocessor, import_csv, export_to_csv, save_to_database, get_historical_data
 from features.model import ModelTrainer, ModelPredictor, ModelEvaluator
-from features.dashboard import display_all_kpis, render_all_charts, FilterManager
+from features.dashboard import display_all_kpis, render_all_charts, render_correlation_matrix, FilterManager
 from features.monitoring import DataDriftDetector, ConfusionMatrixMonitor
 from features.alerts import EarlyWarningSystem, FeatureImportanceViewer
 
@@ -40,7 +42,7 @@ def init_session():
 
 def load_initial_data():
     try:
-        df = get_all_equipos()
+        df = get_all_devices()
         if not df.empty:
             st.session_state["baseline_df"] = df
         return df
@@ -48,85 +50,110 @@ def load_initial_data():
         st.warning(f"No se pudieron cargar datos: {e}")
         return pd.DataFrame()
 
+def floating_progress(placeholder, pct, message):
+    """Render a floating progress notification (fixed position) with a percentage."""
+    pct = max(0, min(100, int(round(pct))))
+    placeholder.markdown(
+        f"""
+        <div style="position: fixed; top: 4.5rem; right: 1.5rem; z-index: 1000000;
+                    background: rgba(17,24,39,0.96); color: #f9fafb; padding: 14px 18px;
+                    border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+                    min-width: 270px; font-family: 'Source Sans Pro', sans-serif;">
+            <div style="display:flex; align-items:center; gap:8px; font-size:0.9rem; margin-bottom:10px;">
+                <span>{message}</span>
+            </div>
+            <div style="background:#374151; border-radius:8px; overflow:hidden; height:10px;">
+                <div style="width:{pct}%; height:100%; transition: width .25s ease;
+                            background:linear-gradient(90deg,#10b981,#34d399);"></div>
+            </div>
+            <div style="text-align:right; font-size:0.8rem; margin-top:6px; color:#9ca3af;">{pct}%</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def train_model(df):
-    with st.spinner("Entrenando modelo..."):
+    from sklearn.model_selection import train_test_split
+
+    progress = st.empty()
+    try:
+        floating_progress(progress, 5, "Cargando datos del dataset...")
         loader = DataLoader()
         preprocessor = Preprocessor()
 
         features = loader.get_features(df)
         targets = loader.get_targets(df)
 
-        # Encode categorical features and extract numeric columns for model input
-        X_encoded = preprocessor.encode_categorical(features.copy(), fit=True)
-        X = X_encoded[[
-            'vida_util_consumida',
-            'tasa_incidencias_tecnicas',
-            'tiempo_inactividad_acumulado',
-            'costo_mto_reactivo_acumulado',
-            'ubicacion_activo_encoded',
-            'tipo_equipo_encoded'
-        ]]
-
-        # Encode target and extract only the encoded integer column
-        y_encoded = preprocessor.encode_target(targets.copy()[["estado_integridad_hardware"]], fit=True)
-        y_estado = y_encoded['estado_integridad_hardware_encoded'].values
-
-        # Encode risk target
-        y_riesgo_encoded = preprocessor.encode_risk_target(targets.copy()[["nivel_riesgo_operativo"]], fit=True)
-        y_riesgo = y_riesgo_encoded['nivel_riesgo_operativo_encoded'].values
-
-        # Combine targets using np.column_stack for multi-output training
-        y_combined = np.column_stack((y_estado, y_riesgo))
-
-        # Import train_test_split and metrics locally
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import accuracy_score, confusion_matrix
-
-        # Split features and combined target labels using 80-20 partition with random state 0
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y_combined, test_size=0.20, random_state=0
+        # Split the RAW data first so the scaler/encoders are fit on train only
+        # (avoids leaking test statistics into the StandardScaler).
+        floating_progress(progress, 20, "Particionando datos (entrenamiento/prueba)...")
+        raw_train, raw_test, target_train, target_test = train_test_split(
+            features, targets, test_size=0.20, random_state=0,
+            stratify=targets[loader.TARGET_COLUMNS[0]],
         )
 
+        # Build scaled/encoded feature matrices and encode the target
+        floating_progress(progress, 40, "Procesando features (escalado y codificación)...")
+        X_train = preprocessor.build_features(raw_train, fit=True)
+        X_test = preprocessor.build_features(raw_test, fit=False)
+        y_train = preprocessor.encode_target(target_train, fit=True)
+        y_test = preprocessor.encode_target(target_test, fit=False)
+
+        floating_progress(progress, 65, "Optimizando hiperparámetros (RandomizedSearchCV)...")
         trainer = ModelTrainer()
-        # Train multi-output model on the training partition
-        trainer.train_multioutput(X_train, y_train)
+        trainer.tune_hyperparameters(X_train, y_train)
 
-        # Predict predictions on the test partition (both estado and riesgo)
-        y_pred = trainer.model.predict(X_test)
+        # Evaluate on the held-out test partition, in original label space
+        floating_progress(progress, 85, "Evaluando el modelo...")
+        y_pred = trainer.predict(X_test)
+        evaluator = ModelEvaluator(trainer, preprocessor)
+        y_test_labels = preprocessor.decode_target(y_test)
+        y_pred_labels = preprocessor.decode_target(y_pred)
 
-        # Calculate accuracy for estado (first column)
-        accuracy = accuracy_score(y_test[:, 0], y_pred[:, 0])
-        print(f"Precisión del modelo: {accuracy * 100:.2f}%")
+        summary = evaluator.summary_metrics(y_test_labels, y_pred_labels)
+        report = evaluator.classification_report(y_test_labels, y_pred_labels)
 
-        # Cálculo de la matriz y la precisión
-        cm = confusion_matrix(y_test[:, 0], y_pred[:, 0])
-        print(cm)
+        print(f"Precisión del modelo: {summary['accuracy'] * 100:.2f}%")
+        print(f"Mejores hiperparámetros: {trainer.best_params_}")
 
-        # Save test metrics in Streamlit session state to display in UI
-        st.session_state["test_accuracy"] = accuracy
-        st.session_state["test_confusion_matrix"] = cm
+        # Persist evaluation results in session state for the UI
+        st.session_state["test_metrics"] = summary
+        st.session_state["test_report"] = report
+        st.session_state["best_params"] = trainer.best_params_
+        st.session_state["best_cv_score"] = trainer.best_cv_score_
 
-        # Save model data including test evaluation results
+        floating_progress(progress, 95, "Guardando el modelo...")
         model_data = {
             "model_name": f"RandomForest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
             "model_path": f"models/trained_models/rf_model_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.joblib",
             "features": ",".join(preprocessor.get_feature_names()),
             "metrics_json": str({
-                "test_accuracy": float(accuracy),
-                "confusion_matrix": cm.tolist()
+                "test_accuracy": summary["accuracy"],
+                "best_params": trainer.best_params_,
+                "best_cv_score": trainer.best_cv_score_,
             }),
-            "feature_importance_json": str(trainer.get_feature_importance())
+            "feature_importance_json": str(trainer.get_feature_importance()),
         }
-        save_trained_model(model_data)
+        try:
+            save_trained_model(model_data)
+        except Exception as e:
+            st.warning(f"No se pudo registrar el modelo en la BD: {e}")
 
-        predictor = ModelPredictor(trainer.model, preprocessor)
+        predictor = ModelPredictor(trainer, preprocessor)
 
         st.session_state["trainer"] = trainer
         st.session_state["preprocessor"] = preprocessor
         st.session_state["predictor"] = predictor
         st.session_state["model_trained"] = True
 
-        return trainer
+        floating_progress(progress, 100, "¡Procesamiento completado!")
+        time.sleep(0.5)
+    finally:
+        progress.empty()
+
+    st.toast("Modelo entrenado correctamente")
+    return trainer
 
 def render_login_page():
     authenticator = authenticate_user()
@@ -142,19 +169,35 @@ def render_login_page():
         pass
 
 def render_prediction_form():
-    st.subheader("Predicción de Estado de Equipo")
+    st.subheader("Predicción de Nivel de Riesgo Operativo")
 
-    vida_util = st.number_input("Vida Útil Consumida (%)", min_value=0.0, max_value=100.0, value=50.0)
-    tasa_incidencias = st.number_input("Tasa Incidencias Técnicas", min_value=0, max_value=100, value=2)
-    tiempo_inactividad = st.number_input("Tiempo Inactividad Acumulado (hrs)", min_value=0.0, max_value=1000.0, value=100.0)
+    from datetime import date
+    import json
 
-    costo_mto = st.number_input("Costo Mantenimiento Reactivo ($)", min_value=0.0, max_value=10000.0, value=150.0)
-    ubicacion = st.selectbox("Ubicación", get_locations())
-    tipo_equipo = st.selectbox("Tipo de Equipo", get_equipment_types())
-
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns(2)
     with col1:
-        predict_clicked = st.button("Predecir Estado", type="primary")
+        device_brand = st.selectbox("Marca", get_brands())
+        device_type = st.selectbox("Tipo de Equipo", get_device_types())
+        acquisition_date = st.date_input(
+            "Fecha de Adquisición", value=date(2021, 1, 1), max_value=date.today()
+        )
+        technical_incident_rate = st.number_input(
+            "Tasa Incidencias Técnicas", min_value=0, max_value=100, value=2
+        )
+    with col2:
+        headquarters_location = st.selectbox("Ubicación", get_locations())
+        hardware_integrity_status = st.selectbox("Estado de Integridad de Hardware", get_hardware_states())
+        no_corrective = st.checkbox("Sin mantenimiento correctivo registrado", value=False)
+        last_reactive_maintenance_date = None
+        if not no_corrective:
+            last_reactive_maintenance_date = st.date_input(
+                "Fecha Último Mto. Correctivo", value=date(2025, 1, 1), max_value=date.today()
+            )
+        last_preventive_maintenance_date = st.date_input(
+            "Fecha Último Mto. Preventivo", value=date(2024, 1, 1), max_value=date.today()
+        )
+
+    predict_clicked = st.button("Predecir Nivel de Riesgo", type="primary")
 
     if predict_clicked:
         if st.session_state["predictor"] is None:
@@ -162,51 +205,67 @@ def render_prediction_form():
             return
 
         input_dict = {
-            "vida_util_consumida": vida_util,
-            "tasa_incidencias_tecnicas": tasa_incidencias,
-            "tiempo_inactividad_acumulado": tiempo_inactividad,
-            "costo_mto_reactivo_acumulado": costo_mto,
-            "ubicacion_activo": ubicacion,
-            "tipo_equipo": tipo_equipo
+            "device_brand": device_brand,
+            "device_type": device_type,
+            "hardware_integrity_status": hardware_integrity_status,
+            "headquarters_location": headquarters_location,
+            "acquisition_date": pd.Timestamp(acquisition_date),
+            "technical_incident_rate": technical_incident_rate,
+            "last_reactive_maintenance_date": (
+                pd.Timestamp(last_reactive_maintenance_date) if last_reactive_maintenance_date else pd.NaT
+            ),
+            "last_preventive_maintenance_date": pd.Timestamp(last_preventive_maintenance_date),
         }
 
-        estado, riesgo = st.session_state["predictor"].predict(input_dict)
+        predictor = st.session_state["predictor"]
+        risk_level = predictor.predict(input_dict)
+        confidence = predictor.predict_proba(input_dict)
 
-        result_col1, result_col2 = st.columns(2)
-        with result_col1:
-            sac.result(
-                label="Estado de Integridad",
-                description=estado,
-                status="success" if estado == "Excelente" else "warning"
-            )
-        with result_col2:
-            sac.result(
-                label="Nivel de Riesgo",
-                description=riesgo,
-                status="error" if riesgo == "Alto" or riesgo == "Critico" else "warning"
-            )
+        status = "error" if risk_level in ("Alto", "Muy Alto") else (
+            "warning" if risk_level == "Medio" else "success"
+        )
+        sac.result(label="Nivel de Riesgo Operativo Predicho", description=risk_level, status=status)
+
+        # Soft output: vote proportion per risk level (confidence)
+        st.markdown("**Confianza de la predicción (proporción de votos)**")
+        cols = st.columns(len(confidence))
+        for col, (level, prop) in zip(cols, confidence.items()):
+            with col:
+                st.metric(level, f"{prop * 100:.1f}%")
+
+        # Derive day-difference features so they can be stored with the prediction
+        engineered = Preprocessor().engineer_features(pd.DataFrame([input_dict]))
 
         alert_system = EarlyWarningSystem()
-        equipo_id = f"PRED_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
-        alerts = alert_system.check_prediction(equipo_id, estado, riesgo, {"costo_mto": costo_mto})
-
-        if alerts:
-            sac.alert(label="Se han generado alertas para este equipo", color="warning", icon=True)
+        device_id = f"PRED_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            alerts = alert_system.check_prediction(
+                device_id, risk_level, {"device_type": device_type, "device_brand": device_brand}
+            )
+            if alerts:
+                sac.alert(label="Se han generado alertas para este equipo", color="warning", icon=True)
+        except Exception as e:
+            st.warning(f"No se pudieron registrar alertas: {e}")
 
         prediction_data = {
-            "equipo_id": equipo_id,
-            "vida_util_consumida": vida_util,
-            "tasa_incidencias_tecnicas": tasa_incidencias,
-            "tiempo_inactividad_acumulado": tiempo_inactividad,
-            "costo_mto_reactivo_acumulado": costo_mto,
-            "ubicacion_activo": ubicacion,
-            "tipo_equipo": tipo_equipo,
-            "estado_integridad_predicted": estado,
-            "nivel_riesgo_predicted": riesgo,
+            "device_id": device_id,
+            "device_brand": device_brand,
+            "acquisition_date": acquisition_date,
+            "technical_incident_rate": technical_incident_rate,
+            "days_since_reactive_maintenance": int(engineered["days_since_last_corrective_maintenance"].iloc[0]),
+            "days_since_preventive_maintenance": int(engineered["days_since_last_preventive_maintenance"].iloc[0]),
+            "headquarters_location": headquarters_location,
+            "hardware_integrity_status": hardware_integrity_status,
+            "device_type": device_type,
+            "predicted_risk_level": risk_level,
+            "confidence_json": json.dumps(confidence),
         }
-        save_prediction(prediction_data)
+        try:
+            save_prediction(prediction_data)
+        except Exception as e:
+            st.warning(f"No se pudo guardar la predicción: {e}")
 
-        return estado
+        return risk_level
 
 def render_import_export():
     st.subheader("Importar/Exportar Datos")
@@ -222,7 +281,27 @@ def render_import_export():
                 st.success(f"CSV cargado: {len(df)} registros")
 
                 if st.button("Guardar en Base de Datos", type="primary"):
-                    count = save_to_database(df)
+                    progress = st.empty()
+                    last_pct = {"value": -1}
+
+                    def _save_progress(done, total):
+                        pct = int(done / total * 100) if total else 100
+                        # Throttle: only re-render the overlay when the percent changes
+                        if pct != last_pct["value"]:
+                            last_pct["value"] = pct
+                            floating_progress(
+                                progress, pct, f"Guardando en base de datos... ({done}/{total})"
+                            )
+
+                    try:
+                        floating_progress(progress, 0, "Guardando en base de datos...")
+                        count = save_to_database(df, progress_callback=_save_progress)
+                        floating_progress(progress, 100, "¡Guardado completado!")
+                        time.sleep(0.4)
+                    finally:
+                        progress.empty()
+
+                    st.toast(f"{count} registros guardados", icon="✅")
                     sac.alert(label=f"{count} registros guardados exitosamente", color="success", icon=True)
                     st.rerun()
             except Exception as e:
@@ -243,13 +322,19 @@ def render_import_export():
                 sac.alert(label=f"Error al exportar: {e}", color="error", icon=True)
 
 def render_dashboard(df):
+    # Derive day-based features (useful_life_consumed_days, etc.) for KPIs/charts
+    if not df.empty and "acquisition_date" in df.columns:
+        try:
+            df = Preprocessor().engineer_features(df)
+        except Exception:
+            pass
     display_all_kpis(df)
     render_all_charts(df)
 
 def render_model_section(df):
     st.subheader("Gestión del Modelo")
 
-    tabs = sac.tabs(items=["Entrenar", "Feature Importance", "Métricas"], align="left")
+    tabs = sac.tabs(items=["Entrenar", "Feature Importance", "Métricas", "Correlación"], align="left")
 
     if tabs == "Entrenar":
         col1, col2 = st.columns([1, 2])
@@ -280,30 +365,38 @@ def render_model_section(df):
 
     elif tabs == "Métricas":
         if st.session_state["model_trained"]:
-            # Retrieve test set accuracy and confusion matrix from session state
-            accuracy = st.session_state.get("test_accuracy")
-            cm = st.session_state.get("test_confusion_matrix")
-            
-            metrics_data = {
-                "status": "Modelo activo",
-                "entrenado": True,
-            }
-            if accuracy is not None:
-                metrics_data["Precisión del modelo (Test)"] = f"{accuracy * 100:.2f}%"
-            st.json(metrics_data)
-            
-            # If the confusion matrix exists, display it as a labeled DataFrame
-            if cm is not None:
-                st.write("**Matriz de Confusión (Test)**")
-                preprocessor = st.session_state.get("preprocessor")
-                if preprocessor and hasattr(preprocessor, "target_encoder") and preprocessor.target_encoder:
-                    classes = preprocessor.target_encoder.categories_[0]
-                    cm_df = pd.DataFrame(cm, index=classes, columns=classes)
-                    st.dataframe(cm_df)
-                else:
-                    st.dataframe(pd.DataFrame(cm))
+            summary = st.session_state.get("test_metrics")
+
+            if summary is not None:
+                st.markdown("**Métricas globales (partición de prueba)**")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Accuracy", f"{summary['accuracy'] * 100:.2f}%")
+                c2.metric("Precision (macro)", f"{summary['precision_macro'] * 100:.2f}%")
+                c3.metric("Recall (macro)", f"{summary['recall_macro'] * 100:.2f}%")
+                c4.metric("F1-Score (macro)", f"{summary['f1_macro'] * 100:.2f}%")
+
+                c5, c6, c7 = st.columns(3)
+                c5.metric("Precision (weighted)", f"{summary['precision_weighted'] * 100:.2f}%")
+                c6.metric("Recall (weighted)", f"{summary['recall_weighted'] * 100:.2f}%")
+                c7.metric("F1-Score (weighted)", f"{summary['f1_weighted'] * 100:.2f}%")
+
+            best_params = st.session_state.get("best_params")
+            best_cv_score = st.session_state.get("best_cv_score")
+            if best_params is not None:
+                st.markdown("---")
+                st.markdown("**Mejores Hiperparámetros (RandomizedSearchCV)**")
+                if best_cv_score is not None:
+                    st.metric("F1-Score (macro, validación cruzada)", f"{best_cv_score * 100:.2f}%")
+                st.json(best_params)
+
         else:
             sac.alert(label="No hay métricas disponibles", color="info", closable=False)
+
+    elif tabs == "Correlación":
+        if df.empty:
+            sac.alert(label="No hay datos para calcular la correlación", color="info", closable=False)
+        else:
+            render_correlation_matrix(df)
 
 def render_monitoring_section(df):
     st.subheader("Monitoreo")
@@ -319,12 +412,39 @@ def render_monitoring_section(df):
 
     elif tabs == "Matriz de Confusión":
         history = get_predictions_history(limit=100)
+
+        # Render the dynamic confusion matrix on the current database data if the model is trained
+        if st.session_state.get("model_trained") and st.session_state.get("predictor") is not None:
+            if not df.empty:
+                try:
+                    df_with_pred = df.copy()
+                    predictor = st.session_state["predictor"]
+
+                    # Predict risk levels using the trained model
+                    X = predictor.preprocessor.build_features(df_with_pred, fit=False)
+                    encoded_preds = predictor.model.predict(X)
+                    df_with_pred['predicted_risk_level'] = predictor.preprocessor.decode_target(encoded_preds)
+
+                    # Initialize the evaluator and confusion matrix monitor
+                    eval_obj = ModelEvaluator(None, st.session_state.get("preprocessor"))
+                    cm_monitor = ConfusionMatrixMonitor(eval_obj)
+                    cm_monitor.render(df_with_pred)
+                except Exception as e:
+                    st.error(f"Error al calcular la matriz de confusión dinámica: {e}")
+            else:
+                sac.alert(label="No hay datos cargados para generar la matriz de confusión dinámica.", color="warning", closable=False)
+        else:
+            sac.alert(label="El modelo no está entrenado. Por favor, entrene el modelo en la sección 'Modelo' para ver la matriz de confusión dinámica.", color="info", closable=False)
+
+        st.markdown("---")
+
+        # Render historical predictions tracking if data exists
         if not history.empty:
-            eval = ModelEvaluator(None, st.session_state.get("preprocessor"))
-            cm_monitor = ConfusionMatrixMonitor(eval)
+            eval_obj = ModelEvaluator(None, st.session_state.get("preprocessor"))
+            cm_monitor = ConfusionMatrixMonitor(eval_obj)
             cm_monitor.render_historical(history)
         else:
-            sac.alert(label="No hay historial de predicciones", color="info", closable=False)
+            sac.alert(label="No hay historial de predicciones guardado.", color="info", closable=False)
 
 def render_alerts_section():
     st.subheader("Alertas Tempranas")
@@ -341,9 +461,21 @@ def main_app():
     if not df.empty and st.session_state["baseline_df"] is None:
         st.session_state["baseline_df"] = df
 
-    menu = ["Dashboard", "Predicción", "Importar/Exportar", "Modelo", "Monitoreo", "Alertas"]
-
-    page = st.sidebar.selectbox("Navegación", menu)
+    # Render the sidebar navigation menu using Streamlit Ant Design components
+    with st.sidebar:
+        page = sac.menu(
+            items=[
+                sac.MenuItem("Dashboard", icon="speedometer2"),
+                sac.MenuItem("Predicción", icon="cpu"),
+                sac.MenuItem("Importar/Exportar", icon="arrow-left-right"),
+                sac.MenuItem("Modelo", icon="gear"),
+                sac.MenuItem("Monitoreo", icon="activity"),
+                sac.MenuItem("Alertas", icon="bell"),
+            ],
+            index=0,
+            variant='light',
+            key="navigation_menu"
+        )
 
     if page == "Dashboard":
         if df.empty:
@@ -392,9 +524,12 @@ def main():
         elif st.session_state.get("authentication_status") is False:
             sac.alert(label="Credenciales incorrectas. Verifique su usuario y contraseña.", color="error", icon=True)
     else:
-        # User is authenticated
-        authenticator.logout(location='sidebar', button_name='Cerrar Sesión')
+        # Render main application contents first
         main_app()
+        # Add a visual separator in the sidebar
+        st.sidebar.divider()
+        # Render logout button below the menu navigation
+        authenticator.logout(location='sidebar')
 
 if __name__ == "__main__":
     main()

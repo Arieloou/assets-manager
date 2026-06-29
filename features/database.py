@@ -1,7 +1,7 @@
 import streamlit as st
-from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy import create_engine, Column, String, Integer, Float, Date, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from datetime import datetime
@@ -40,26 +40,27 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
-class Equipo(Base):
-    __tablename__ = "equipos"
+class Device(Base):
+    __tablename__ = "devices"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    id_equipo = Column(String(100), unique=True, nullable=False)
-    vida_util_consumida = Column(Float)
-    tasa_incidencias_tecnicas = Column(Integer)
-    tiempo_inactividad_acumulado = Column(Float)
-    costo_mto_reactivo_acumulado = Column(Float)
-    ubicacion_activo = Column(String(50))
-    estado_integridad_hardware = Column(String(50))
-    tipo_equipo = Column(String(50))
-    nivel_riesgo_operativo = Column(String(50))
-    timestamp_registro = Column(DateTime, default=datetime.utcnow)
+    device_id = Column(String(100), unique=True, nullable=False)
+    device_brand = Column(String(50))
+    acquisition_date = Column(Date)
+    technical_incident_rate = Column(Integer)
+    last_reactive_maintenance_date = Column(Date, nullable=True)
+    last_preventive_maintenance_date = Column(Date)
+    headquarters_location = Column(String(50))
+    hardware_integrity_status = Column(String(50))
+    device_type = Column(String(50))
+    operational_risk_level = Column(String(50))
+    registered_at = Column(DateTime, default=datetime.utcnow)
 
 class HistoricalData(Base):
     __tablename__ = "historical_data"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    equipo_id = Column(UUID(as_uuid=True), ForeignKey("equipos.id"))
+    device_id = Column(UUID(as_uuid=True), ForeignKey("devices.id"))
     data_json = Column(Text)
     imported_at = Column(DateTime, default=datetime.utcnow)
     filename = Column(String(255))
@@ -68,26 +69,28 @@ class Prediction(Base):
     __tablename__ = "predictions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    equipo_id = Column(String(100), nullable=False)
-    vida_util_consumida = Column(Float)
-    tasa_incidencias_tecnicas = Column(Integer)
-    tiempo_inactividad_acumulado = Column(Float)
-    costo_mto_reactivo_acumulado = Column(Float)
-    ubicacion_activo = Column(String(50))
-    tipo_equipo = Column(String(50))
-    estado_integridad_predicted = Column(String(50))
-    nivel_riesgo_predicted = Column(String(50))
+    device_id = Column(String(100), nullable=False)
+    device_brand = Column(String(50))
+    device_type = Column(String(50))
+    acquisition_date = Column(Date)
+    technical_incident_rate = Column(Integer)
+    days_since_reactive_maintenance = Column(Integer)
+    days_since_preventive_maintenance = Column(Integer)
+    headquarters_location = Column(String(50))
+    hardware_integrity_status = Column(String(50))
+    predicted_risk_level = Column(String(50))
+    confidence_json = Column(Text)
     prediction_at = Column(DateTime, default=datetime.utcnow)
 
 class Alert(Base):
     __tablename__ = "alerts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    equipo_id = Column(String(100), nullable=False)
-    tipo_alerta = Column(String(50), nullable=False)
-    prioridad = Column(String(20), nullable=False)
-    mensaje = Column(Text)
-    estado = Column(String(20), default="pendiente")
+    device_id = Column(String(100), nullable=False)
+    alert_type = Column(String(50), nullable=False)
+    priority_level = Column(String(20), nullable=False)
+    message_text = Column(Text)
+    status_alert = Column(String(20), default="pendiente")
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime)
 
@@ -117,12 +120,12 @@ def create_default_user():
     session = get_session()
     existing = session.query(User).filter_by(username="admin").first()
     if not existing:
-        password_hash = hashlib.sha256("admin123".encode()).hexdigest()
+        password_hash = hashlib.sha256("admin".encode()).hexdigest()
         admin = User(
             username="admin",
-            email="admin@equipos.com",
-            first_name="Admin",
-            last_name="User",
+            email="admin@admin.com",
+            first_name="Ariel",
+            last_name="Anchapaxi",
             password_hash=password_hash,
             role="admin"
         )
@@ -137,31 +140,37 @@ def verify_user(username: str, password: str) -> bool:
     session.close()
     return user is not None
 
-def save_equipo(equipo_data: dict) -> Equipo:
+def save_device(device_data: dict) -> Device:
     session = get_session()
-    equipo = Equipo(**equipo_data)
-    session.add(equipo)
+    device = Device(**device_data)
+    session.add(device)
     session.commit()
     session.close()
-    return equipo
+    return device
 
-def get_all_equipos() -> pd.DataFrame:
+def get_all_devices() -> pd.DataFrame:
+    """Return all devices as a DataFrame using the dataset column names.
+
+    The database column names mirror the dataset, so a DB-loaded DataFrame has
+    the same shape as a freshly imported CSV.
+    """
     session = get_session()
-    equipos = session.query(Equipo).all()
+    devices = session.query(Device).all()
     session.close()
     return pd.DataFrame([{
-        "id": str(e.id),
-        "id_equipo": e.id_equipo,
-        "vida_util_consumida": e.vida_util_consumida,
-        "tasa_incidencias_tecnicas": e.tasa_incidencias_tecnicas,
-        "tiempo_inactividad_acumulado": e.tiempo_inactividad_acumulado,
-        "costo_mto_reactivo_acumulado": e.costo_mto_reactivo_acumulado,
-        "ubicacion_activo": e.ubicacion_activo,
-        "estado_integridad_hardware": e.estado_integridad_hardware,
-        "tipo_equipo": e.tipo_equipo,
-        "nivel_riesgo_operativo": e.nivel_riesgo_operativo,
-        "timestamp_registro": e.timestamp_registro
-    } for e in equipos])
+        "id": str(device.id),
+        "device_id": device.device_id,
+        "device_brand": device.device_brand,
+        "device_type": device.device_type,
+        "acquisition_date": device.acquisition_date,
+        "technical_incident_rate": device.technical_incident_rate,
+        "last_reactive_maintenance_date": device.last_reactive_maintenance_date,
+        "last_preventive_maintenance_date": device.last_preventive_maintenance_date,
+        "headquarters_location": device.headquarters_location,
+        "hardware_integrity_status": device.hardware_integrity_status,
+        "operational_risk_level": device.operational_risk_level,
+        "registered_at": device.registered_at,
+    } for device in devices])
 
 def save_prediction(prediction_data: dict) -> Prediction:
     session = get_session()
@@ -181,7 +190,7 @@ def save_alert(alert_data: dict) -> Alert:
 
 def get_pending_alerts() -> list:
     session = get_session()
-    alerts = session.query(Alert).filter_by(estado="pendiente").order_by(Alert.created_at.desc()).all()
+    alerts = session.query(Alert).filter_by(status_alert="pendiente").order_by(Alert.created_at.desc()).all()
     session.close()
     return alerts
 
@@ -189,7 +198,7 @@ def resolve_alert(alert_id: str):
     session = get_session()
     alert = session.query(Alert).filter_by(id=uuid.UUID(alert_id)).first()
     if alert:
-        alert.estado = "resuelto"
+        alert.status_alert = "resuelto"
         alert.resolved_at = datetime.utcnow()
         session.commit()
     session.close()
@@ -227,8 +236,9 @@ def get_predictions_history(limit: int = 100) -> pd.DataFrame:
     session.close()
     return pd.DataFrame([{
         "id": str(p.id),
-        "equipo_id": p.equipo_id,
-        "estado_integridad_predicted": p.estado_integridad_predicted,
-        "nivel_riesgo_predicted": p.nivel_riesgo_predicted,
+        "device_id": p.device_id,
+        "hardware_integrity_status": p.hardware_integrity_status,
+        "predicted_risk_level": p.predicted_risk_level,
+        "confidence_json": p.confidence_json,
         "prediction_at": p.prediction_at
     } for p in predictions])

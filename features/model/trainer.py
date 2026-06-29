@@ -1,203 +1,161 @@
 import joblib
 import numpy as np
+from scipy.stats import randint
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from typing import Dict, List, Optional, Any
+from sklearn.model_selection import cross_val_score, RandomizedSearchCV
 
 from features.config import get_model_params
 
 
 class ModelTrainer:
-    """Trainer class for Random Forest model training.
-    
-    Trains a model to predict Estado_Integridad_Hardware (multi-class: Excelente, Bueno, Regular, Critico).
+    """Random Forest trainer for the single target ``operational_risk_level``.
+
+    The quantitative features are already standardized by the ``Preprocessor``
+    (its ``scaler`` / ``sc``), so the model itself is a bare
+    ``RandomForestClassifier`` (``random_classifier_model``).
     """
-    
-    FEATURE_COLUMNS = [
-        'vida_util_consumida',
-        'tasa_incidencias_tecnicas',
-        'tiempo_inactividad_acumulado',
-        'costo_mto_reactivo_acumulado',
-        'ubicacion_activo_encoded',
-        'tipo_equipo_encoded'
-    ]
-    
-    FEATURE_NAMES = [
-        'vida_util_consumida',
-        'tasa_incidencias_tecnicas',
-        'tiempo_inactividad_acumulado',
-        'costo_mto_reactivo_acumulado',
-        'ubicacion_activo',
-        'tipo_equipo'
-    ]
-    
-    RISK_ENCODING_ORDER = ['Bajo', 'Medio', 'Alto', 'Critico']
-    
+
     def __init__(self):
-        """Initialize RandomForestClassifier with params from config."""
-        # Load hyperparameters from config file
         params = get_model_params()
-        
-        # Setup the pipeline scaling numerical values and feeding to RandomForestClassifier
-        self.model = Pipeline([
-            ('scaler', StandardScaler()),
-            ('classifier', RandomForestClassifier(
-                n_estimators=params.get('n_estimators', 50),
-                criterion='entropy',
-                class_weight='balanced',
-                random_state=50
-            ))
-        ])
-        self._feature_importances = None
-    
-    def train(self, X_train, y_train):
-        """Fit the model and return self.
-        
-        Args:
-            X_train: Training features (DataFrame or array)
-            y_train: Training labels
-            
-        Returns:
-            self
-        """
-        # Train the entire pipeline (StandardScaler and RandomForestClassifier)
-        self.model.fit(X_train, y_train)
-        
-        # Retrieve the feature importances from the classifier step of the pipeline
-        self._feature_importances = self.model.named_steps['classifier'].feature_importances_
-        return self
-    
-    def train_risk(self, X_train, y_risk):
-        """Fit a separate model for risk level prediction.
-        
-        Args:
-            X_train: Training features (DataFrame or array)
-            y_risk: Training risk labels
-            
-        Returns:
-            self
-        """
-        self.model.fit(X_train, y_risk)
-        self._feature_importances = self.model.named_steps['classifier'].feature_importances_
-        return self
-    
-    def train_multioutput(self, X_train, y_multi):
-        """Fit a single model for multi-output prediction (estado and riesgo).
-        
-        Args:
-            X_train: Training features (DataFrame or array)
-            y_multi: 2D array of targets (estado, riesgo) via np.column_stack
-            
-        Returns:
-            self
-        """
-        params = get_model_params()
-        rf_multi = RandomForestClassifier(
-            n_estimators=params.get("n_estimators", 100),
-            criterion="entropy",
-            random_state=50
+        self.model = RandomForestClassifier(
+            n_estimators=params.get('n_estimators', 100),
+            max_depth=params.get('max_depth', None),
+            min_samples_split=params.get('min_samples_split', 2),
+            min_samples_leaf=params.get('min_samples_leaf', 1),
+            criterion='entropy',
+            class_weight='balanced',
+            random_state=50,
         )
-        rf_multi.fit(X_train, y_multi)
-        self.model = rf_multi
-        self._feature_importances = rf_multi.feature_importances_
+        self._feature_importances = None
+        self._feature_names = None
+        self.best_params_ = None
+        self.best_cv_score_ = None
+
+    # ------------------------------------------------------------------ #
+    def _capture(self, X):
+        """Store the feature names from the training matrix when available."""
+        if hasattr(X, 'columns'):
+            self._feature_names = list(X.columns)
+
+    # ------------------------------------------------------------------ #
+    def train(self, X_train, y_train):
+        """Fit the model on the training data and return self."""
+        self._capture(X_train)
+        self.model.fit(X_train, y_train)
+        self._feature_importances = self.model.feature_importances_
         return self
-    
+
+    def predict(self, X):
+        """Predict encoded risk levels for the given feature matrix."""
+        return self.model.predict(X)
+
+    def predict_proba(self, X):
+        """Return per-class vote proportions (soft output)."""
+        return self.model.predict_proba(X)
+
+    @property
+    def classes_(self):
+        return self.model.classes_
+
     def cross_validate(self, X, y, k=5):
-        """Perform k-fold cross-validation.
-        
-        Args:
-            X: Features for cross-validation
-            y: Labels for cross-validation
-            k: Number of folds (default 5)
-            
-        Returns:
-            Dict with mean_accuracy, std_accuracy, and individual fold scores
-        """
-        # Compute cross validation scores using the pipeline to prevent data leakage
+        """Perform k-fold cross-validation."""
         scores = cross_val_score(self.model, X, y, cv=k)
-        
         return {
             "mean_accuracy": float(np.mean(scores)),
             "std_accuracy": float(np.std(scores)),
-            "fold_scores": scores.tolist()
+            "fold_scores": scores.tolist(),
         }
-    
-    def get_feature_importance(self):
-        """Return feature importances as dict.
-        
-        Returns:
-            Dictionary mapping feature names to their importance values
-        """
-        if self._feature_importances is None:
-            # Extract importance from the correct pipeline step if necessary
-            if hasattr(self.model, 'feature_importances_'):
-                self._feature_importances = self.model.feature_importances_
-            else:
-                self._feature_importances = self.model.named_steps['classifier'].feature_importances_
-        
-        return dict(zip(self.FEATURE_NAMES, self._feature_importances))
-    
-    def train_without_vida_util(self, X, y):
-        """Train a variant excluding Vida_Util_Consumida column.
-        
-        Args:
-            X: Full features DataFrame or array
-            y: Labels
-            
-        Returns:
-            self with a new model trained without Vida_Util_Consumida
-        """
-        # Load parameters from config file
-        params = get_model_params()
-        
-        # Initialize a separate pipeline excluding the vida util column
-        model_without_vida = Pipeline([
-            ('scaler', StandardScaler()),
-            ('classifier', RandomForestClassifier(
-                n_estimators=params.get("n_estimators", 50),
-                criterion="entropy",
-                random_state=50
-            ))
-        ])
-        
-        vida_util_idx = self.FEATURE_COLUMNS.index("vida_util_consumida")
-        
-        # Extract features without the vida util column
-        if hasattr(X, "columns"):
-            X_without_vida = X.drop(columns=["vida_util_consumida"])
-        else:
-            X_without_vida = np.delete(X, vida_util_idx, axis=1)
-        
-        # Fit the model without the vida util feature
-        model_without_vida.fit(X_without_vida, y)
-        self.model = model_without_vida
-        self._feature_importances = self.model.named_steps['classifier'].feature_importances_
-        
-        return self
-    
-    def save_model(self, filepath):
-        """Save model using joblib.
-        
-        Args:
-            filepath: Path where to save the model
-        """
-        # Save the entire pipeline object (including StandardScaler)
-        joblib.dump(self.model, filepath)
-    
-    def load_model(self, filepath):
-        """Load model using joblib.
-        
-        Args:
-            filepath: Path to the saved model
-        """
-        # Load the saved pipeline object from disk
-        self.model = joblib.load(filepath)
-        
-        # Get feature importances from pipeline step or estimator
-        if hasattr(self.model, 'feature_importances_'):
-            self._feature_importances = self.model.feature_importances_
-        else:
-            self._feature_importances = self.model.named_steps['classifier'].feature_importances_
 
+    def tune_hyperparameters(self, X, y, n_iter=None, cv=None, scoring='f1_macro', random_state=50):
+        """Search for better hyperparameters with ``RandomizedSearchCV``.
+
+        Searches ``n_estimators``, ``max_depth``, ``min_samples_split``,
+        ``min_samples_leaf``, ``max_features`` and ``criterion``, keeping
+        ``class_weight='balanced'`` fixed to address the risk-level class
+        imbalance. ``scoring='f1_macro'`` is used instead of accuracy so the
+        search isn't biased toward the majority risk classes.
+
+        Sets ``self.model`` to the best estimator found and records
+        ``self.best_params_`` / ``self.best_cv_score_``. Returns self.
+        """
+        params = get_model_params()
+        n_iter = n_iter if n_iter is not None else params.get('n_iter_search', 25)
+        cv = cv if cv is not None else params.get('cv_folds', 5)
+
+        param_distributions = {
+            'n_estimators': randint(100, 400),
+            'max_depth': [None, 5, 8, 10, 12, 15, 20],
+            'min_samples_split': randint(2, 11),
+            'min_samples_leaf': randint(1, 6),
+            'max_features': ['sqrt', 'log2', None],
+            'criterion': ['gini', 'entropy'],
+        }
+
+        base_model = RandomForestClassifier(class_weight='balanced', random_state=random_state)
+        search = RandomizedSearchCV(
+            base_model,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            random_state=random_state,
+            n_jobs=-1,
+        )
+        search.fit(X, y)
+
+        self._capture(X)
+        self.model = search.best_estimator_
+        self._feature_importances = self.model.feature_importances_
+        self.best_params_ = search.best_params_
+        self.best_cv_score_ = float(search.best_score_)
+        return self
+
+    def get_feature_importance(self):
+        """Return feature importances as a {name: importance} dict."""
+        if self._feature_importances is None:
+            self._feature_importances = self.model.feature_importances_
+
+        names = self._feature_names
+        if names is None or len(names) != len(self._feature_importances):
+            names = [f"feature_{i}" for i in range(len(self._feature_importances))]
+        return dict(zip(names, self._feature_importances))
+
+    def train_without_useful_life(self, X, y):
+        """Train a variant excluding ``useful_life_consumed_days`` (robustness check).
+
+        Per ``Proyecto IA.md``, this checks the model is not over-reliant on a
+        single potentially-leaky feature.
+        """
+        params = get_model_params()
+        model_wo = RandomForestClassifier(
+            n_estimators=params.get('n_estimators', 100),
+            max_depth=params.get('max_depth', None),
+            criterion='entropy',
+            class_weight='balanced',
+            random_state=50,
+        )
+
+        if hasattr(X, 'columns') and 'useful_life_consumed_days' in X.columns:
+            X_wo = X.drop(columns=['useful_life_consumed_days'])
+        else:
+            X_wo = np.delete(np.asarray(X), 0, axis=1)
+
+        self._capture(X_wo)
+        model_wo.fit(X_wo, y)
+        self.model = model_wo
+        self._feature_importances = model_wo.feature_importances_
+        return self
+
+    def save_model(self, filepath):
+        """Persist the model (and feature names) with joblib."""
+        joblib.dump({"model": self.model, "feature_names": self._feature_names}, filepath)
+
+    def load_model(self, filepath):
+        """Load a model previously saved with ``save_model``."""
+        data = joblib.load(filepath)
+        if isinstance(data, dict) and "model" in data:
+            self.model = data["model"]
+            self._feature_names = data.get("feature_names")
+        else:
+            self.model = data
+        self._feature_importances = self.model.feature_importances_

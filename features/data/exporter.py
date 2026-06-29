@@ -1,131 +1,112 @@
 import csv
-import io
 from datetime import datetime
 
 import pandas as pd
-import streamlit as st
 
-from features.database import save_equipo, get_all_equipos, get_session, HistoricalData
+from features.database import save_device, get_all_devices
 
 
-def get_risk_level(estado_integridad: str) -> str:
-    """Calculate risk level based on hardware integrity state."""
-    risk_mapping = {
-        "Excelente": "Bajo",
-        "Bueno": "Medio",
-        "Regular": "Alto",
-        "Critico": "Critico",
-        "Crítico": "Critico"
-    }
-    return risk_mapping.get(estado_integridad, "Medio")
+REQUIRED_COLUMNS = [
+    "device_id",
+    "device_brand",
+    "device_type",
+    "acquisition_date",
+    "technical_incident_rate",
+    "last_reactive_maintenance_date",
+    "last_preventive_maintenance_date",
+    "headquarters_location",
+    "hardware_integrity_status",
+    "operational_risk_level",
+]
 
 
 def validate_schema(df: pd.DataFrame) -> bool:
-    """Validate that the DataFrame has required columns."""
-    required_columns = [
-        "id_equipo",
-        "vida_util_consumida",
-        "tasa_incidencias_tecnicas",
-        "tiempo_inactividad_acumulado",
-        "costo_mto_reactivo_acumulado",
-        "ubicacion_activo",
-        "estado_integridad_hardware",
-        "tipo_equipo"
-    ]
+    """Validate that the DataFrame has the required dataset columns.
 
-    return all(col in df.columns for col in required_columns)
+    ``last_reactive_maintenance_date`` may be entirely absent only if the column
+    is missing from the file; null values within it are allowed.
+    """
+    return all(col in df.columns for col in REQUIRED_COLUMNS)
+
+
+def _parse_date(value):
+    """Parse a single date value (day-first); return None when missing/invalid."""
+    if value is None or (isinstance(value, float) and pd.isna(value)) or value == "":
+        return None
+    ts = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    if pd.isna(ts):
+        return None
+    return ts.date()
 
 
 def import_csv(uploaded_file) -> pd.DataFrame:
-    """Import a CSV file and return a DataFrame with added timestamp and risk level.
-    
-    Args:
-        uploaded_file: Streamlit UploadedFile object
-        
-    Returns:
-        DataFrame with added timestamp_registro and nivel_riesgo_operativo columns
-        
+    """Import a CSV file and return a DataFrame with an added timestamp.
+
+    The dataset already carries the ``operational_risk_level`` target, so no
+    risk derivation is performed here.
+
     Raises:
-        ValueError: If CSV schema is invalid
+        ValueError: If the CSV schema is invalid.
     """
-    # Auto-detect delimiter (supports comma and semicolon CSV files)
     sample = uploaded_file.read(4096)
     if isinstance(sample, bytes):
-        sample = sample.decode("utf-8")
+        sample = sample.decode("utf-8-sig", errors="replace")
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
         delimiter = dialect.delimiter
     except Exception:
-        delimiter = ","
+        delimiter = ";"
     uploaded_file.seek(0)
-    
-    df = pd.read_csv(uploaded_file, sep=delimiter)
-    
+
+    df = pd.read_csv(uploaded_file, sep=delimiter, encoding="utf-8-sig")
+
     if not validate_schema(df):
-        raise ValueError("Invalid CSV schema. Required columns: " + ", ".join([
-            "id_equipo",
-            "vida_util_consumida",
-            "tasa_incidencias_tecnicas",
-            "tiempo_inactividad_acumulado",
-            "costo_mto_reactivo_acumulado",
-            "ubicacion_activo",
-            "estado_integridad_hardware",
-            "tipo_equipo"
-        ]))
-    
-    # Calculate risk level and add timestamp column
-    df["nivel_riesgo_operativo"] = df["estado_integridad_hardware"].apply(get_risk_level)
-    df["timestamp_registro"] = datetime.now()
-        
+        raise ValueError(
+            "Invalid CSV schema. Required columns: " + ", ".join(REQUIRED_COLUMNS)
+        )
+
+    df["registered_at"] = datetime.now()
     return df
 
 
 def export_to_csv(df: pd.DataFrame) -> bytes:
-    """Convert a DataFrame to CSV bytes for download.
-    
-    Args:
-        df: DataFrame to convert
-        
-    Returns:
-        CSV bytes ready for download
-    """
+    """Convert a DataFrame to CSV bytes for download."""
     return df.to_csv(index=False).encode("utf-8")
 
 
-def save_to_database(df: pd.DataFrame) -> int:
-    """Save DataFrame records to PostgreSQL database.
-    
+def save_to_database(df: pd.DataFrame, progress_callback=None) -> int:
+    """Persist DataFrame records to the database. Returns the count saved.
+
     Args:
-        df: DataFrame containing equipment records
-        
-    Returns:
-        Number of records saved
+        df: DataFrame with the dataset columns.
+        progress_callback: Optional callable invoked as ``callback(done, total)``
+            after each saved record, so callers can render progress.
     """
     saved_count = 0
-    
+    total = len(df)
+
     for _, row in df.iterrows():
-        equipo_data = {
-            "id_equipo": row["id_equipo"],
-            "vida_util_consumida": row["vida_util_consumida"],
-            "tasa_incidencias_tecnicas": row["tasa_incidencias_tecnicas"],
-            "tiempo_inactividad_acumulado": row["tiempo_inactividad_acumulado"],
-            "costo_mto_reactivo_acumulado": row["costo_mto_reactivo_acumulado"],
-            "ubicacion_activo": row["ubicacion_activo"],
-            "estado_integridad_hardware": row["estado_integridad_hardware"],
-            "tipo_equipo": row["tipo_equipo"],
-            "nivel_riesgo_operativo": row["nivel_riesgo_operativo"],
-            "timestamp_registro": row["timestamp_registro"],
+        device_data = {
+            "device_id": str(row["device_id"]),
+            "device_brand": row.get("device_brand"),
+            "acquisition_date": _parse_date(row.get("acquisition_date")),
+            "technical_incident_rate": int(row["technical_incident_rate"]),
+            "last_reactive_maintenance_date": _parse_date(row.get("last_reactive_maintenance_date")),
+            "last_preventive_maintenance_date": _parse_date(row.get("last_preventive_maintenance_date")),
+            "headquarters_location": row["headquarters_location"],
+            "hardware_integrity_status": row["hardware_integrity_status"],
+            "device_type": row["device_type"],
+            "operational_risk_level": row.get("operational_risk_level"),
+            "registered_at": row.get("registered_at", datetime.now()),
         }
-        save_equipo(equipo_data)
+        save_device(device_data)
         saved_count += 1
-    
+        if progress_callback is not None:
+            progress_callback(saved_count, total)
+
     return saved_count
 
 
 def get_historical_data() -> pd.DataFrame:
-    """Retrieve all historical data from the database.
-    
-    Returns:
-        DataFrame containing all historical equipment data
-    """
-    return get_all_equipos()
+    """Retrieve all historical equipment data from the database."""
+    return get_all_devices()

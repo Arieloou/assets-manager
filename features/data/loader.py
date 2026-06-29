@@ -1,141 +1,104 @@
 import csv
 
 import pandas as pd
-from features.database import get_all_equipos
+from features.database import get_all_devices
 
 
 class DataLoader:
-    # Required columns for the dataset
+    """Loads the device dataset and exposes raw feature / target columns.
+
+    Feature engineering (date differences, encoders, scaling) is delegated to
+    ``features.data.preprocessor.Preprocessor``.
+    """
+
+    # Raw columns expected in the dataset / database
     REQUIRED_COLUMNS = [
-        'id_equipo',
-        'vida_util_consumida',
-        'tasa_incidencias_tecnicas',
-        'tiempo_inactividad_acumulado',
-        'costo_mto_reactivo_acumulado',
-        'ubicacion_activo',
-        'estado_integridad_hardware',
-        'nivel_riesgo_operativo',
-        'tipo_equipo'
+        'device_id',
+        'device_brand',
+        'device_type',
+        'acquisition_date',
+        'technical_incident_rate',
+        'last_reactive_maintenance_date',
+        'last_preventive_maintenance_date',
+        'headquarters_location',
+        'hardware_integrity_status',
+        'operational_risk_level',
     ]
 
-    # Feature columns for model input (excludes ID_Equipo which is identifier)
+    # Raw columns used to derive the model features (excludes device_id, which is
+    # an identifier, and the target column).
     FEATURE_COLUMNS = [
-        'vida_util_consumida',
-        'tasa_incidencias_tecnicas',
-        'tiempo_inactividad_acumulado',
-        'costo_mto_reactivo_acumulado',
-        'ubicacion_activo',
-        'tipo_equipo'
+        'device_brand',
+        'device_type',
+        'hardware_integrity_status',
+        'headquarters_location',
+        'acquisition_date',
+        'technical_incident_rate',
+        'last_reactive_maintenance_date',
+        'last_preventive_maintenance_date',
     ]
 
-    # Target columns
+    # Single target column
     TARGET_COLUMNS = [
-        'estado_integridad_hardware',
-        'nivel_riesgo_operativo'
+        'operational_risk_level',
     ]
-
-    # Column mapping from database snake_case to spec PascalCase
-    COLUMN_MAPPING = {
-        'id_equipo': 'id_equipo',
-        'vida_util_consumida': 'vida_util_consumida',
-        'tasa_incidencias_tecnicas': 'tasa_incidencias_tecnicas',
-        'tiempo_inactividad_acumulado': 'tiempo_inactividad_acumulado',
-        'costo_mto_reactivo_acumulado': 'costo_mto_reactivo_acumulado',
-        'ubicacion_activo': 'ubicacion_activo',
-        'estado_integridad_hardware': 'estado_integridad_hardware',
-        'nivel_riesgo_operativo': 'nivel_riesgo_operativo',
-        'tipo_equipo': 'tipo_equipo',
-    }
 
     @staticmethod
     def load_csv(filepath: str) -> pd.DataFrame:
-        """Load dataset from CSV file using pandas.
+        """Load the dataset from a CSV file.
+
+        Auto-detects the delimiter (the provided dataset uses ``;``) and reads
+        with ``utf-8-sig`` to strip the BOM.
 
         Args:
             filepath: Path to the CSV file.
 
         Returns:
-            DataFrame with normalized column names.
+            DataFrame with the raw dataset columns.
         """
-        # Auto-detect delimiter (supports comma and semicolon CSV files)
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
             sample = f.read(4096)
-        dialect = csv.Sniffer().sniff(sample, delimiters=',;\t')
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=',;\t')
+            delimiter = dialect.delimiter
+        except csv.Error:
+            delimiter = ';'
 
-        df = pd.read_csv(filepath, sep=dialect.delimiter)
-
-        return df
+        return pd.read_csv(filepath, sep=delimiter, encoding='utf-8-sig')
 
     @staticmethod
     def load_from_db() -> pd.DataFrame:
-        """Load all equipos from PostgreSQL database.
-
-        Returns:
-            DataFrame with normalized column names.
-        """
-        df = get_all_equipos()
-
-        # Rename columns from snake_case to PascalCase to match spec
-        df = df.rename(columns=DataLoader.COLUMN_MAPPING)
-
-        return df
+        """Load all devices from the database."""
+        return get_all_devices()
 
     @staticmethod
     def validate_schema(df: pd.DataFrame) -> bool:
-        """Validate that dataframe has required columns.
+        """Validate that the DataFrame has the required columns.
 
-        Args:
-            df: DataFrame to validate.
-
-        Returns:
-            True if all required columns are present, False otherwise.
+        ``operational_risk_level`` is optional here so that prediction-only
+        DataFrames (without the target) still pass.
         """
-        missing_columns = []
-        for col in DataLoader.REQUIRED_COLUMNS:
-            if col not in df.columns:
-                missing_columns.append(col)
-
-        if missing_columns:
-            raise ValueError("Missing required columns: " + ", ".join(missing_columns))
-
+        required = [c for c in DataLoader.REQUIRED_COLUMNS if c != 'operational_risk_level']
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+            raise ValueError("Missing required columns: " + ", ".join(missing))
         return True
 
     @staticmethod
     def get_features(df: pd.DataFrame) -> pd.DataFrame:
-        """Return only the feature columns for model input.
-
-        Args:
-            df: DataFrame containing all columns.
-
-        Returns:
-            DataFrame with only feature columns.
-        """
-        # Validate that required columns exist
+        """Return only the raw feature columns used by the preprocessor."""
         DataLoader.validate_schema(df)
 
-        # Return only feature columns that exist in the DataFrame
         available_features = [col for col in DataLoader.FEATURE_COLUMNS if col in df.columns]
-
         if not available_features:
             raise ValueError("No feature columns found in DataFrame")
 
-        return df[available_features]
+        return df[available_features].copy()
 
     @staticmethod
     def get_targets(df: pd.DataFrame) -> pd.DataFrame:
-        """Return target columns if present.
-
-        Args:
-            df: DataFrame containing all columns.
-
-        Returns:
-            DataFrame with target columns (Estado_Integridad_Hardware,
-            Nivel_Riesgo_Operativo) if present.
-        """
+        """Return the target column (operational_risk_level) if present."""
         available_targets = [col for col in DataLoader.TARGET_COLUMNS if col in df.columns]
-
         if not available_targets:
-            # Return empty DataFrame with target column names if none present
             return pd.DataFrame(columns=DataLoader.TARGET_COLUMNS)
-
-        return df[available_targets]
+        return df[available_targets].copy()

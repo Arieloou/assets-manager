@@ -1,58 +1,58 @@
 import streamlit as st
 import pandas as pd
 
-def display_tiempo_inactividad_promedio(df):
-    if df.empty or "tiempo_inactividad_acumulado" not in df.columns:
-        return None
-    mean_val = df["tiempo_inactividad_acumulado"].mean()
-    return st.metric("Tiempo Inactividad Promedio", f"{mean_val:.2f} hrs")
+from features.config import get_risk_levels
 
-def display_costo_mantenimiento_promedio(df):
-    if df.empty or "costo_mto_reactivo_acumulado" not in df.columns:
-        return None
-    mean_val = df["costo_mto_reactivo_acumulado"].mean()
-    return st.metric("Costo Mantenimiento Promedio", f"${mean_val:.2f}")
+HIGH_RISK_LEVELS = ["Alto", "Muy Alto"]
 
-def display_total_equipos(df):
+
+def display_total_devices(df):
     if df.empty:
         return None
     return st.metric("Total Equipos Registrados", len(df))
 
-def display_estado_distribution(df):
-    if df.empty or "estado_integridad_hardware" not in df.columns:
-        return None
-    counts = df["estado_integridad_hardware"].value_counts()
-    return st.metric("Equipos por Estado", counts.to_dict())
 
-def display_ubicacion_distribution(df):
-    if df.empty or "ubicacion_activo" not in df.columns:
+def display_high_risk_pct(df):
+    if df.empty or "operational_risk_level" not in df.columns:
         return None
-    counts = df["ubicacion_activo"].value_counts()
-    return st.metric("Equipos por Ubicación", counts.to_dict())
+    high = df["operational_risk_level"].isin(HIGH_RISK_LEVELS).sum()
+    pct = (high / len(df) * 100) if len(df) else 0
+    return st.metric("Equipos en Riesgo Alto/Muy Alto", f"{pct:.1f}%")
+
+
+def display_average_useful_life(df):
+    if df.empty or "useful_life_consumed_days" not in df.columns:
+        return None
+    mean_days = pd.to_numeric(df["useful_life_consumed_days"], errors="coerce").mean()
+    if pd.isna(mean_days):
+        return None
+    return st.metric("Vida Útil Promedio", f"{mean_days / 365.25:.1f} años")
+
 
 def display_all_kpis(df):
     st.subheader("Indicadores Clave de Rendimiento")
 
     col1, col2, col3 = st.columns(3)
-
     with col1:
-        display_total_equipos(df)
+        display_total_devices(df)
     with col2:
-        display_tiempo_inactividad_promedio(df)
+        display_high_risk_pct(df)
     with col3:
-        display_costo_mantenimiento_promedio(df)
+        display_average_useful_life(df)
 
-    if "estado_integridad_hardware" in df.columns:
+    if "operational_risk_level" in df.columns or "hardware_integrity_status" in df.columns:
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
-            st.write("**Distribución por Estado de Integridad**")
-            estado_counts = df["estado_integridad_hardware"].value_counts()
-            for estado, count in estado_counts.items():
-                st.write(f"- {estado}: {count}")
+            if "operational_risk_level" in df.columns:
+                st.write("**Distribución por Nivel de Riesgo Operativo**")
+                counts = df["operational_risk_level"].value_counts()
+                for level in get_risk_levels():
+                    if level in counts:
+                        st.write(f"- {level}: {counts[level]}")
         with col2:
-            if "ubicacion_activo" in df.columns:
-                st.write("**Distribución por Ubicación**")
-                ubicacion_counts = df["ubicacion_activo"].value_counts()
-                for ubicacion, count in ubicacion_counts.items():
-                    st.write(f"- {ubicacion}: {count}")
+            if "hardware_integrity_status" in df.columns:
+                st.write("**Distribución por Estado de Integridad**")
+                status_counts = df["hardware_integrity_status"].value_counts()
+                for status, count in status_counts.items():
+                    st.write(f"- {status}: {count}")

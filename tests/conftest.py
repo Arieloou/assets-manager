@@ -1,11 +1,11 @@
-"""Shared fixtures for all test modules."""
+"""Shared fixtures for all test modules (English dataset schema)."""
 
-import pytest
-import pandas as pd
-import numpy as np
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = str(Path(__file__).parent.parent)
@@ -13,85 +13,81 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 
-# --- Synthetic DataFrame fixtures ---
+LOCATIONS = ["Park", "Granados", "Colon"]
+DEVICE_TYPES = ["Computadora de Escritorio", "Laptop", "Proyector", "Impresora"]
+BRANDS = ["HP", "Dell", "Epson", "NEC", "Canon"]
+STATUSES = ["Excelente", "Bueno", "Desgastado", "Malo", "Crítico"]
+RISK_LEVELS = ["Muy Bajo", "Bajo", "Medio", "Alto", "Muy Alto"]
+
+# Rough status -> risk mapping so the synthetic data carries a learnable signal.
+STATUS_TO_RISK = dict(zip(STATUSES, RISK_LEVELS))
+
 
 @pytest.fixture
 def sample_equipos_df():
-    """Synthetic DataFrame simulating database 'equipos' records (snake_case cols)."""
-    np.random.seed(42)
-    n = 50
-    ubicaciones = ["UDLAPARK", "GRANADOS", "COLON"]
-    tipos = ["Computadora", "Impresora", "Servidor", "Router", "Switch"]
-    estados = ["Excelente", "Bueno", "Regular", "Critico"]
-    riesgos = ["Bajo", "Medio", "Alto", "Critico"]
+    """Synthetic DataFrame matching the dataset schema (English columns)."""
+    rng = np.random.RandomState(42)
+    n = 75  # 15 per risk class
+    rows = []
+    for i in range(n):
+        status = STATUSES[i % len(STATUSES)]
+        risk = STATUS_TO_RISK[status]
+        # Acquisition between ~1 and ~7 years ago
+        acq = pd.Timestamp("2026-01-01") - pd.Timedelta(days=int(rng.randint(365, 2555)))
+        prev = acq + pd.Timedelta(days=int(rng.randint(30, 900)))
+        # Every 3rd device has no corrective maintenance recorded
+        if i % 3 == 0:
+            reactive = None
+        else:
+            reactive = acq + pd.Timedelta(days=int(rng.randint(30, 1200)))
 
-    return pd.DataFrame({
-        "id": [f"uuid-{i}" for i in range(n)],
-        "id_equipo": [f"EQ-{i:04d}" for i in range(n)],
-        "vida_util_consumida": np.random.uniform(5, 95, n).round(2),
-        "tasa_incidencias_tecnicas": np.random.randint(0, 10, n),
-        "tiempo_inactividad_acumulado": np.random.uniform(0, 500, n).round(2),
-        "costo_mto_reactivo_acumulado": np.random.uniform(0, 400, n).round(2),
-        "ubicacion_activo": np.random.choice(ubicaciones, n),
-        "estado_integridad_hardware": np.random.choice(estados, n),
-        "tipo_equipo": np.random.choice(tipos, n),
-        "nivel_riesgo_operativo": np.random.choice(riesgos, n),
-        "timestamp_registro": pd.date_range("2025-01-01", periods=n, freq="D"),
-    })
+        rows.append({
+            "device_id": f"EQ-{i:04d}",
+            "device_brand": BRANDS[i % len(BRANDS)],
+            "device_type": DEVICE_TYPES[i % len(DEVICE_TYPES)],
+            "acquisition_date": acq.strftime("%d/%m/%Y"),
+            "technical_incident_rate": int(rng.randint(0, 20)),
+            "last_reactive_maintenance_date": reactive.strftime("%d/%m/%Y") if reactive is not None else None,
+            "last_preventive_maintenance_date": prev.strftime("%d/%m/%Y"),
+            "headquarters_location": LOCATIONS[i % len(LOCATIONS)],
+            "hardware_integrity_status": status,
+            "operational_risk_level": risk,
+            "registered_at": pd.Timestamp("2026-01-01") + pd.Timedelta(days=i),
+        })
+    return pd.DataFrame(rows)
 
 
 @pytest.fixture
 def sample_pascal_df(sample_equipos_df):
-    """Same data but with snake_case column names (aligned with database schema)."""
-    # Simply return sample_equipos_df since it is already in snake_case
+    """Backwards-compatible alias."""
     return sample_equipos_df
 
 
 @pytest.fixture
 def sample_csv_file(tmp_path, sample_equipos_df):
-    """Write a temp CSV file with snake_case columns for import tests."""
+    """Write a temp semicolon-separated CSV with the raw dataset columns."""
     csv_path = tmp_path / "test_data.csv"
-    # Drop the 'id' column (UUID), keep the rest
-    df = sample_equipos_df.drop(columns=["id", "timestamp_registro", "nivel_riesgo_operativo"])
-    df.to_csv(csv_path, index=False)
+    df = sample_equipos_df.drop(columns=["registered_at"])
+    df.to_csv(csv_path, index=False, sep=";")
     return csv_path
 
 
 @pytest.fixture
-def trained_model_and_preprocessor(sample_pascal_df):
-    """Return a fitted (trainer, preprocessor) tuple for multi-output prediction tests."""
-    import numpy as np
+def trained_model_and_preprocessor(sample_equipos_df):
+    """Return a fitted (trainer, preprocessor) tuple for the risk model."""
     from features.data import DataLoader, Preprocessor
     from features.model import ModelTrainer
 
-    df = sample_pascal_df
     loader = DataLoader()
     preprocessor = Preprocessor()
 
-    features = loader.get_features(df)
-    targets = loader.get_targets(df)
+    features = loader.get_features(sample_equipos_df)
+    targets = loader.get_targets(sample_equipos_df)
 
-    X = preprocessor.encode_categorical(features.copy(), fit=True)
-    y = preprocessor.encode_target(targets.copy()[["Estado_Integridad_Hardware"]], fit=True)
-    y_riesgo = preprocessor.encode_risk_target(targets.copy()[["Nivel_Riesgo_Operativo"]], fit=True)
-
-    # Select only the model-ready columns
-    feature_cols = [
-        "Vida_Util_Consumida",
-        "Tasa_Incidencias_Tecnicas",
-        "Tiempo_Inactividad_Acumulado",
-        "Costo_Mto_Reactivo_Acumulado",
-        "Ubicacion_Activo_encoded",
-        "Tipo_Equipo_encoded",
-    ]
-    X_ready = X[feature_cols]
-    y_estado = y["Estado_Integridad_Hardware_encoded"].values
-    y_riesgo = y_riesgo["Nivel_Riesgo_Operativo_encoded"].values
-    
-    # Combine targets using np.column_stack for multi-output training
-    y_combined = np.column_stack((y_estado, y_riesgo))
+    X = preprocessor.build_features(features, fit=True)
+    y = preprocessor.encode_target(targets, fit=True)
 
     trainer = ModelTrainer()
-    trainer.train_multioutput(X_ready, y_combined)
+    trainer.train(X, y)
 
     return trainer, preprocessor

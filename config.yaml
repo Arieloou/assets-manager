@@ -1,5 +1,5 @@
 app:
-  name: "Sistema Predicción de Fallos"
+  name: "Sistema Predicción de Riesgo Operativo"
   debug: false
 
 model_params:
@@ -8,48 +8,46 @@ model_params:
   min_samples_split: 5
   min_samples_leaf: 2
   cv_folds: 5
+  # Number of random parameter combinations tried by RandomizedSearchCV
+  n_iter_search: 25
 
-# vida_util_consumida ranges in days [mean, std, clip_low, clip_high]
-vida_util_params:
-  ÓPTIMO: [1250, 500, 0, 2000]
-  OPERATIVO: [3500, 800, 2000, 5000]
-  PREVENTIVO: [6500, 800, 5000, 8000]
-  CRÍTICO: [9000, 600, 8000, 10000]
+# useful_life_consumed ranges in days [min, max] for dashboard filters
+useful_life_params:
+  NUEVO: [0, 730]
+  OPERATIVO: [730, 1825]
+  MADURO: [1825, 2920]
+  FIN_DE_VIDA: [2920, 100000]
 
-# tasa_incidencias_tecnicas threshold values
-incidencias_lambda:
-  BAJA: 0
-  MEDIA: 1
-  ALTA: 3
-  CRÍTICA: 5
-
-# costo_mto_reactivo_acumulado ranges [min, max]
-costo_params:
-  BAJO: [0, 3000]
-  MEDIO: [3000, 10000]
-  REGULAR: [10000, 25000]
-  ALTO: [25000, 40000]
-
-equipment_types:
+device_types:
   - "Computadora de Escritorio"
-  - "Impresora"
-  - "Servidor"
   - "Laptop"
   - "Proyector"
+  - "Impresora"
+
+brands:
+  - "HP"
+  - "Dell"
+  - "Epson"
+  - "NEC"
+  - "Canon"
 
 locations:
-  - "UDLAPARK"
-  - "GRANADOS"
-  - "COLON"
+  - "Park"
+  - "Granados"
+  - "Colon"
 
+# Orden ordinal de mejor a peor (OrdinalEncoder)
 hardware_states:
   - "Excelente"
   - "Bueno"
-  - "Regular"
-  - "Critico"
+  - "Desgastado"
+  - "Malo"
+  - "Crítico"
 
+# Orden ordinal de menor a mayor riesgo (OrdinalEncoder, target)
 risk_levels:
+  - "Muy Bajo"
   - "Bajo"
   - "Medio"
   - "Alto"
-  - "Critico"
+  - "Muy Alto"

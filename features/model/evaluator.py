@@ -2,81 +2,50 @@
 """Model evaluator for confusion matrix and classification metrics."""
 
 import pandas as pd
-from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+from sklearn.metrics import classification_report, accuracy_score
+
+from features.config import get_risk_levels
 
 
 class ModelEvaluator:
-    """Evaluates model performance using standard classification metrics."""
+    """Evaluates risk-level predictions with standard classification metrics."""
 
-    TARGET_CLASSES = ['Excelente', 'Bueno', 'Regular', 'Critico']
-
-    def __init__(self, model, preprocessor):
-        """Initialize with a trained model and preprocessor.
+    def __init__(self, model=None, preprocessor=None):
+        """Initialize with an optional trained model and preprocessor.
 
         Args:
-            model: Trained sklearn model (can be None for metrics-only usage)
-            preprocessor: Preprocessor instance
+            model: Trained model (optional, only needed for live predictions).
+            preprocessor: Preprocessor instance (optional).
         """
         self.model = model
         self.preprocessor = preprocessor
-
-    def confusion_matrix(self, y_true, y_pred):
-        """Compute confusion matrix as a labeled DataFrame.
-
-        Args:
-            y_true: True labels
-            y_pred: Predicted labels
-
-        Returns:
-            DataFrame with rows=actual, columns=predicted
-        """
-        cm = confusion_matrix(y_true, y_pred, labels=self.TARGET_CLASSES)
-        return pd.DataFrame(cm, index=self.TARGET_CLASSES, columns=self.TARGET_CLASSES)
+        self.target_classes = get_risk_levels()
 
     def classification_report(self, y_true, y_pred):
-        """Generate classification report as a dictionary.
-
-        Args:
-            y_true: True labels
-            y_pred: Predicted labels
-
-        Returns:
-            Dictionary with per-class and overall metrics
-        """
-        report = classification_report(
-            y_true, y_pred, labels=self.TARGET_CLASSES, output_dict=True
+        """Classification report (precision / recall / F1) as a dict."""
+        return classification_report(
+            y_true, y_pred, labels=self.target_classes, output_dict=True, zero_division=0
         )
-        return report
 
     def accuracy_score(self, y_true, y_pred):
-        """Compute overall accuracy.
-
-        Args:
-            y_true: True labels
-            y_pred: Predicted labels
-
-        Returns:
-            Float accuracy score between 0 and 1
-        """
+        """Overall accuracy in [0, 1]."""
         return float(accuracy_score(y_true, y_pred))
 
-    def get_predictions_with_actuals(self, df):
-        """Generate predictions and return alongside actual values.
-
-        Args:
-            df: DataFrame with a 'target' column and feature columns
+    def summary_metrics(self, y_true, y_pred):
+        """Headline metrics for the UI cards.
 
         Returns:
-            DataFrame with 'actual' and 'predicted' columns
+            Dict with accuracy plus macro/weighted precision, recall and F1.
         """
-        X = df.drop(columns=['target'])
-        X_processed = self.preprocessor.transform(X)
-        predictions = self.model.predict(X_processed)
-        return pd.DataFrame({
-            'actual': df['target'],
-            'predicted': predictions
-        })
-
-    def analyze_false_positives(self):
-        """Placeholder for false positive analysis."""
-        pass
+        report = self.classification_report(y_true, y_pred)
+        macro = report.get("macro avg", {})
+        weighted = report.get("weighted avg", {})
+        return {
+            "accuracy": self.accuracy_score(y_true, y_pred),
+            "precision_macro": macro.get("precision", 0.0),
+            "recall_macro": macro.get("recall", 0.0),
+            "f1_macro": macro.get("f1-score", 0.0),
+            "precision_weighted": weighted.get("precision", 0.0),
+            "recall_weighted": weighted.get("recall", 0.0),
+            "f1_weighted": weighted.get("f1-score", 0.0),
+        }

@@ -42,9 +42,6 @@ def load_credentials() -> dict:
     # Return empty dict if no credentials source is available
     return {"usernames": {}}
 
-
-
-
 def is_pre_hashed() -> bool:
     try:
         if "credentials" in st.secrets:

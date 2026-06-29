@@ -1,13 +1,43 @@
 import streamlit as st
+# pyrefly: ignore [missing-import]
 import plotly.express as px
 import pandas as pd
 
-def donut_chart_ubicacion(df):
-    if df.empty or "ubicacion_activo" not in df.columns:
+from features.config import get_hardware_states, get_risk_levels
+from features.data.preprocessor import Preprocessor
+
+# Studied variables for the correlation matrix (engineered + raw numeric).
+STUDIED_NUMERIC = [
+    "useful_life_consumed_days",
+    "technical_incident_rate",
+    "days_since_last_corrective_maintenance",
+    "days_since_last_preventive_maintenance",
+]
+NOMINAL_CATEGORICALS = ["device_brand", "device_type", "headquarters_location"]
+
+ESTADO_COLOR_MAP = {
+    "Excelente": "#2ecc71",
+    "Bueno": "#3498db",
+    "Desgastado": "#f39c12",
+    "Malo": "#e67e22",
+    "Crítico": "#e74c3c",
+}
+
+RIESGO_COLOR_MAP = {
+    "Muy Bajo": "#2ecc71",
+    "Bajo": "#27ae60",
+    "Medio": "#f39c12",
+    "Alto": "#e67e22",
+    "Muy Alto": "#e74c3c",
+}
+
+
+def donut_chart_by_location(df):
+    if df.empty or "headquarters_location" not in df.columns:
         st.info("No hay datos de ubicación disponibles")
         return
 
-    counts = df["ubicacion_activo"].value_counts().reset_index()
+    counts = df["headquarters_location"].value_counts().reset_index()
     counts.columns = ["Ubicacion", "Cantidad"]
 
     fig = px.pie(
@@ -18,28 +48,22 @@ def donut_chart_ubicacion(df):
         title="Distribución de Equipos por Ubicación",
         color="Ubicacion",
         color_discrete_map={
-            "UDLAPARK": "#1f77b4",
-            "GRANADOS": "#ff7f0e",
-            "COLON": "#2ca02c"
-        }
+            "Park": "#1f77b4",
+            "Granados": "#ff7f0e",
+            "Colon": "#2ca02c",
+        },
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
     st.plotly_chart(fig, width='stretch')
 
-def bar_chart_estado(df):
-    if df.empty or "estado_integridad_hardware" not in df.columns:
+
+def bar_chart_device_status(df):
+    if df.empty or "hardware_integrity_status" not in df.columns:
         st.info("No hay datos de estado disponibles")
         return
 
-    counts = df["estado_integridad_hardware"].value_counts().reset_index()
+    counts = df["hardware_integrity_status"].value_counts().reset_index()
     counts.columns = ["Estado", "Cantidad"]
-
-    color_map = {
-        "Excelente": "#2ecc71",
-        "Bueno": "#3498db",
-        "Regular": "#f39c12",
-        "Crítico": "#e74c3c"
-    }
 
     fig = px.bar(
         counts,
@@ -47,62 +71,100 @@ def bar_chart_estado(df):
         y="Cantidad",
         title="Cantidad de Equipos por Estado de Integridad",
         color="Estado",
-        color_discrete_map=color_map,
-        text="Cantidad"
+        color_discrete_map=ESTADO_COLOR_MAP,
+        category_orders={"Estado": get_hardware_states()},
+        text="Cantidad",
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, width='stretch')
 
-def line_chart_tiempo(df):
-    if df.empty or "timestamp_registro" not in df.columns:
+
+def bar_chart_risk_level(df):
+    if df.empty or "operational_risk_level" not in df.columns:
+        st.info("No hay datos de riesgo disponibles")
         return
 
-    df["timestamp_registro"] = pd.to_datetime(df["timestamp_registro"])
-    temporal = df.groupby(df["timestamp_registro"].dt.date).size().reset_index(name="Equipos_Registrados")
-    temporal.columns = ["Fecha", "Equipos Registrados"]
+    counts = df["operational_risk_level"].value_counts().reset_index()
+    counts.columns = ["Riesgo", "Cantidad"]
 
-    fig = px.line(
-        temporal,
-        x="Fecha",
-        y="Equipos Registrados",
-        title="Registro de Equipos en el Tiempo"
+    fig = px.bar(
+        counts,
+        x="Riesgo",
+        y="Cantidad",
+        title="Cantidad de Equipos por Nivel de Riesgo Operativo",
+        color="Riesgo",
+        color_discrete_map=RIESGO_COLOR_MAP,
+        category_orders={"Riesgo": get_risk_levels()},
+        text="Cantidad",
     )
+    fig.update_layout(showlegend=False)
     st.plotly_chart(fig, width='stretch')
 
-def scatter_plot_vida_costo(df):
-    if df.empty or "vida_util_consumida" not in df.columns or "costo_mto_reactivo_acumulado" not in df.columns:
+
+def build_correlation_frame(df):
+    """Build a numeric DataFrame of the studied variables for correlation.
+
+    Quantitative day-based features and ``technical_incident_rate`` are used
+    directly; ``hardware_integrity_status`` and the target ``operational_risk_level``
+    are ordinal-encoded by their configured order; the nominal categoricals
+    (brand, type, location) are label-encoded purely for the correlation view.
+    """
+    pre = Preprocessor()
+    engineered = pre.engineer_features(df)
+
+    corr_data = {}
+    for col in STUDIED_NUMERIC:
+        if col in engineered.columns:
+            corr_data[col] = pd.to_numeric(engineered[col], errors="coerce")
+
+    status_order = {value: i for i, value in enumerate(get_hardware_states())}
+    if "hardware_integrity_status" in engineered.columns:
+        corr_data["hardware_integrity_status"] = engineered["hardware_integrity_status"].map(status_order)
+
+    for col in NOMINAL_CATEGORICALS:
+        if col in engineered.columns:
+            corr_data[col] = engineered[col].astype("category").cat.codes
+
+    risk_order = {value: i for i, value in enumerate(get_risk_levels())}
+    if "operational_risk_level" in engineered.columns:
+        corr_data["operational_risk_level"] = engineered["operational_risk_level"].map(risk_order)
+
+    return pd.DataFrame(corr_data).corr()
+
+
+def render_correlation_matrix(df):
+    """Render the correlation matrix of the studied variables as a heatmap."""
+    if df.empty or "acquisition_date" not in df.columns:
+        st.info("No hay datos suficientes para calcular la matriz de correlación")
         return
 
-    color_map = {
-        "Excelente": "#2ecc71",
-        "Bueno": "#3498db",
-        "Regular": "#f39c12",
-        "Crítico": "#e74c3c"
-    }
+    corr = build_correlation_frame(df)
 
-    fig = px.scatter(
-        df,
-        x="vida_util_consumida",
-        y="costo_mto_reactivo_acumulado",
-        color="estado_integridad_hardware" if "estado_integridad_hardware" in df.columns else None,
-        title="Vida Útil Consumida vs Costo de Mantenimiento",
-        color_discrete_map=color_map,
-        hover_data=["id_equipo"] if "id_equipo" in df.columns else None
+    fig = px.imshow(
+        corr,
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
+        zmin=-1,
+        zmax=1,
+        aspect="auto",
+        title="Matriz de Correlación de las Variables Estudiadas",
     )
-    fig.update_layout(height=500)
+    fig.update_layout(height=650)
     st.plotly_chart(fig, width='stretch')
+    st.caption(
+        "Las variables categóricas nominales (marca, tipo, ubicación) se codificaron "
+        "numéricamente solo para el cálculo de correlación; su magnitud no implica orden."
+    )
+
 
 def render_all_charts(df):
     st.subheader("Visualizaciones")
 
-    tab1, tab2, tab3 = st.tabs(["Ubicación", "Estado", "Análisis"])
+    tab1, tab2, tab3 = st.tabs(["Ubicación", "Estado", "Riesgo"])
 
     with tab1:
-        donut_chart_ubicacion(df)
-
+        donut_chart_by_location(df)
     with tab2:
-        bar_chart_estado(df)
-
+        bar_chart_device_status(df)
     with tab3:
-        scatter_plot_vida_costo(df)
-        line_chart_tiempo(df)
+        bar_chart_risk_level(df)

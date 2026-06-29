@@ -1,63 +1,69 @@
-"""Tests for features/dashboard/ — FilterManager, KPIs, Charts logic."""
+"""Tests for features/dashboard/ — FilterManager and correlation logic (no Streamlit UI)."""
 
 import pytest
-import pandas as pd
-import numpy as np
+
+from features.dashboard.charts import build_correlation_frame
 from features.dashboard.filters import FilterManager
 
 
-@pytest.fixture
-def dashboard_df():
-    """DataFrame with PascalCase columns expected by dashboard components."""
-    np.random.seed(42)
-    n = 30
-    return pd.DataFrame({
-        "ID_Equipo": [f"EQ-{i:04d}" for i in range(n)],
-        "Vida_Util_Consumida": np.random.uniform(5, 95, n).round(2),
-        "Tasa_Incidencias_Tecnicas": np.random.randint(0, 10, n),
-        "Tiempo_Inactividad_Acumulado": np.random.uniform(0, 500, n).round(2),
-        "Costo_Mto_Reactivo_Acumulado": np.random.uniform(0, 400, n).round(2),
-        "Ubicacion_Activo": np.random.choice(["UDLAPARK", "GRANADOS", "COLON"], n),
-        "Estado_Integridad_Hardware": np.random.choice(
-            ["Excelente", "Bueno", "Regular", "Crítico"], n
-        ),
-        "Tipo_Equipo": np.random.choice(
-            ["Computadora", "Impresora", "Servidor"], n
-        ),
-        "Nivel_Riesgo_Operativo": np.random.choice(
-            ["Bajo", "Medio", "Alto", "Crítico"], n
-        ),
-        "timestamp_registro": pd.date_range("2025-01-01", periods=n, freq="D"),
-    })
+class TestCorrelationFrame:
+    def test_includes_studied_variables_and_target(self, sample_equipos_df):
+        corr = build_correlation_frame(sample_equipos_df)
+        for col in [
+            "useful_life_consumed_days",
+            "technical_incident_rate",
+            "days_since_last_corrective_maintenance",
+            "days_since_last_preventive_maintenance",
+            "hardware_integrity_status",
+            "device_brand",
+            "device_type",
+            "headquarters_location",
+            "operational_risk_level",
+        ]:
+            assert col in corr.columns
+
+    def test_is_square_with_unit_diagonal(self, sample_equipos_df):
+        corr = build_correlation_frame(sample_equipos_df)
+        assert corr.shape[0] == corr.shape[1]
+        # Diagonal of a correlation matrix is 1.0
+        assert all(abs(corr.iloc[i, i] - 1.0) < 1e-9 for i in range(corr.shape[0]))
 
 
 class TestFilterManager:
-    """Verify FilterManager filtering logic (without Streamlit UI)."""
+    def test_init_stores_original(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
+        assert len(fm.original_df) == len(sample_equipos_df)
 
-    def test_init_stores_original(self, dashboard_df):
-        fm = FilterManager(dashboard_df)
-        assert len(fm.original_df) == len(dashboard_df)
-
-    def test_no_filters_returns_full_df(self, dashboard_df):
-        fm = FilterManager(dashboard_df)
+    def test_no_filters_returns_full_df(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
         result = fm.apply_filters()
-        assert len(result) == len(dashboard_df)
+        assert len(result) == len(sample_equipos_df)
 
-    def test_ubicacion_filter(self, dashboard_df):
-        fm = FilterManager(dashboard_df)
-        fm._active_filters["ubicacion"] = ["UDLAPARK"]
-        # FilterManager uses 'ubicacion' as column key — this tests the logic
-        # even though column names differ, verify filter dict is stored
-        assert fm._active_filters["ubicacion"] == ["UDLAPARK"]
+    def test_location_filter(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
+        fm._active_filters["location"] = ["Park"]
+        result = fm.apply_filters()
+        assert set(result["headquarters_location"].unique()) == {"Park"}
 
-    def test_empty_filter_no_crash(self, dashboard_df):
-        fm = FilterManager(dashboard_df)
+    def test_risk_level_filter(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
+        fm._active_filters["risk_level"] = ["Muy Alto"]
+        result = fm.apply_filters()
+        assert set(result["operational_risk_level"].unique()) == {"Muy Alto"}
+
+    def test_brand_filter(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
+        fm._active_filters["brand"] = ["HP"]
+        result = fm.apply_filters()
+        assert set(result["device_brand"].unique()) == {"HP"}
+
+    def test_empty_filter_no_crash(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
         fm._active_filters = {}
         result = fm.apply_filters()
-        assert len(result) == len(dashboard_df)
+        assert len(result) == len(sample_equipos_df)
 
-    def test_original_df_is_copy(self, dashboard_df):
-        fm = FilterManager(dashboard_df)
+    def test_original_df_is_copy(self, sample_equipos_df):
+        fm = FilterManager(sample_equipos_df)
         fm.original_df.iloc[0, 0] = "MODIFIED"
-        # Original source should not be modified
-        assert dashboard_df.iloc[0, 0] != "MODIFIED"
+        assert sample_equipos_df.iloc[0, 0] != "MODIFIED"
