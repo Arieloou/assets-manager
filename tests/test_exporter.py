@@ -1,6 +1,5 @@
-"""Tests for features/data/exporter.py — import/export functions."""
+"""Tests for features/data/exporter.py — import/persistence functions."""
 
-from io import BytesIO
 from unittest.mock import patch
 
 import pandas as pd
@@ -9,7 +8,6 @@ import pytest
 from features.data.exporter import (
     validate_schema,
     import_csv,
-    export_to_csv,
     save_to_database,
     get_historical_data,
 )
@@ -43,13 +41,6 @@ class TestImportCsv:
         with open(bad_csv, "rb") as f:
             with pytest.raises(ValueError, match="Invalid CSV schema"):
                 import_csv(f)
-
-
-class TestExportToCsv:
-    def test_export_returns_bytes(self):
-        result = export_to_csv(pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
-        assert isinstance(result, bytes)
-        assert b"a,b" in result
 
 
 class TestSaveToDatabase:

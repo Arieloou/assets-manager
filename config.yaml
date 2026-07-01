@@ -16,7 +16,7 @@ useful_life_params:
   NUEVO: [0, 730]
   OPERATIVO: [730, 1825]
   MADURO: [1825, 2920]
-  FIN_DE_VIDA: [2920, 100000]
+  DEPRECIADO: [2920, 100000]
 
 device_types:
   - "Computadora de Escritorio"

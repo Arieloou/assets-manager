@@ -10,13 +10,23 @@ from features.config import (
     get_device_types,
     get_risk_levels,
 )
+from features.data.preprocessor import Preprocessor
 
 
 class FilterManager:
     """Manages dynamic filtering for the dashboard."""
 
     def __init__(self, df: pd.DataFrame):
-        self.original_df = df.copy()
+        df = df.copy()
+        # Derive day-based features (useful_life_consumed_days, etc.) so the
+        # "VIDA ÚTIL" filter has a column to operate on. The raw DataFrame only
+        # carries acquisition_date, not the engineered useful_life_consumed_days.
+        if not df.empty and "acquisition_date" in df.columns and "useful_life_consumed_days" not in df.columns:
+            try:
+                df = Preprocessor().engineer_features(df)
+            except Exception:
+                pass
+        self.original_df = df
         self._filtered_df = df.copy()
         self._active_filters: Dict[str, Any] = {}
 

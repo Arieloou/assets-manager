@@ -1,5 +1,8 @@
+# pyrefly: ignore [missing-import]
 import joblib
 import numpy as np
+
+# pyrefly: ignore [missing-import]
 from scipy.stats import randint
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score, RandomizedSearchCV
@@ -49,7 +52,7 @@ class ModelTrainer:
         """Predict encoded risk levels for the given feature matrix."""
         return self.model.predict(X)
 
-    def predict_proba(self, X):
+    def soft_output_predict(self, X):
         """Return per-class vote proportions (soft output)."""
         return self.model.predict_proba(X)
 

@@ -1,6 +1,12 @@
 import streamlit as st
+# pyrefly: ignore [missing-import]
 import plotly.express as px
 import pandas as pd
+
+from features.theme import style_fig
+
+TOP_N = 15
+
 
 class FeatureImportanceViewer:
     def __init__(self, trainer):
@@ -12,27 +18,45 @@ class FeatureImportanceViewer:
         importance_dict = self.trainer.get_feature_importance()
 
         if not importance_dict:
-            st.info("El modelo aún no ha sido entrenado.")
+            st.info("El modelo aún no ha sido entrenado.", icon=":material/info:")
             return
 
         importance_df = pd.DataFrame({
             "Feature": list(importance_dict.keys()),
-            "Importance": list(importance_dict.values())
-        }).sort_values("Importance", ascending=True)
+            "Importance": list(importance_dict.values()),
+        }).sort_values("Importance", ascending=False)
 
+        st.caption(
+            f"Top {min(TOP_N, len(importance_df))} variables con mayor peso en las "
+            "predicciones del Random Forest."
+        )
+
+        top = importance_df.head(TOP_N).sort_values("Importance", ascending=True)
         fig = px.bar(
-            importance_df,
+            top,
             x="Importance",
             y="Feature",
             orientation="h",
-            title="Feature Importance - Random Forest",
             color="Importance",
-            color_continuous_scale="Viridis"
+            color_continuous_scale="Blues",
+            text=top["Importance"].map(lambda v: f"{v:.3f}"),
         )
-        fig.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_coloraxes(showscale=False)
+        style_fig(
+            fig,
+            xaxis_title="Importancia relativa",
+            yaxis_title=None,
+            height=max(360, 26 * len(top) + 80),
+        )
+        st.plotly_chart(fig, width="stretch")
 
-        st.dataframe(importance_df.sort_values("Importance", ascending=False), use_container_width=True)
+        with st.expander("Ver tabla completa de importancia"):
+            st.dataframe(
+                importance_df.reset_index(drop=True),
+                width="stretch",
+                hide_index=True,
+            )
 
     def render_comparison(self, old_importance, new_importance):
         st.subheader("Comparación de Importancia de Variables (Pre vs Post Reentrenamiento)")

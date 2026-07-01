@@ -6,6 +6,14 @@ from features.database import save_alert, get_pending_alerts, resolve_alert
 HIGH_VALUE_TYPES = ["Laptop", "Proyector"]
 HIGH_RISK_LEVELS = ["Alto", "Muy Alto"]
 
+# Estilo de severidad por prioridad (coherente con la paleta de riesgo).
+# Iconos de Material Symbols (sintaxis ":material/...:").
+PRIORITY_STYLE = {
+    "ALTA": {"icon": ":material/crisis_alert:", "color": "#DC2626"},
+    "MEDIA": {"icon": ":material/warning:", "color": "#EA580C"},
+    "BAJA": {"icon": ":material/info:", "color": "#F59E0B"},
+}
+
 
 class EarlyWarningSystem:
     """Registers prioritized alerts based on operational-risk predictions."""
@@ -56,22 +64,39 @@ class EarlyWarningSystem:
         pending = get_pending_alerts()
 
         if not pending:
-            st.success("No hay alertas pendientes")
+            st.success("No hay alertas pendientes. Todos los equipos bajo control.", icon=":material/check_circle:")
             return
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Alertas Pendientes", len(pending))
         high_priority = sum(1 for a in pending if a.priority_level == "ALTA")
-        with col2:
-            st.metric("Alertas Alta Prioridad", high_priority)
+        col1, col2 = st.columns(2)
+        col1.metric(
+            "Alertas pendientes", len(pending),
+            help="Alertas generadas por predicciones de alto riesgo aún sin resolver.",
+        )
+        col2.metric(
+            "Alta prioridad", high_priority,
+            delta=None if high_priority == 0 else f"{high_priority} urgente(s)",
+            delta_color="inverse",
+            help="Alertas de equipos en Riesgo Muy Alto o equipos de alto valor.",
+        )
 
-        for alert in pending:
-            with st.expander(f"⚠️ {alert.alert_type} - {alert.device_id} ({alert.priority_level})"):
-                st.write(f"**Mensaje:** {alert.message_text}")
-                st.write(f"**Creada:** {alert.created_at}")
-                st.write(f"**Estado:** {alert.status_alert}")
-
-                if st.button("Resolver", key=str(alert.id)):
-                    resolve_alert(str(alert.id))
-                    st.rerun()
+        st.markdown("---")
+        # Mostrar primero las de mayor prioridad.
+        order = {"ALTA": 0, "MEDIA": 1, "BAJA": 2}
+        for alert in sorted(pending, key=lambda a: order.get(a.priority_level, 9)):
+            style = PRIORITY_STYLE.get(alert.priority_level, {"icon": ":material/help:", "color": "#64748B"})
+            with st.container(border=True):
+                head, action = st.columns([5, 1])
+                with head:
+                    st.markdown(
+                        f"{style['icon']} **{alert.alert_type}** · `{alert.device_id}` "
+                        f"<span style='color:{style['color']};font-weight:600'>"
+                        f"({alert.priority_level})</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.write(alert.message_text)
+                    st.caption(f"Creada: {alert.created_at} · Estado: {alert.status_alert}")
+                with action:
+                    if st.button("Resolver", key=str(alert.id), type="primary"):
+                        resolve_alert(str(alert.id))
+                        st.rerun()

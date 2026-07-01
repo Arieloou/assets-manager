@@ -68,12 +68,6 @@ def import_csv(uploaded_file) -> pd.DataFrame:
     df["registered_at"] = datetime.now()
     return df
 
-
-def export_to_csv(df: pd.DataFrame) -> bytes:
-    """Convert a DataFrame to CSV bytes for download."""
-    return df.to_csv(index=False).encode("utf-8")
-
-
 def save_to_database(df: pd.DataFrame, progress_callback=None) -> int:
     """Persist DataFrame records to the database. Returns the count saved.
 

@@ -57,6 +57,23 @@ class TestFilterManager:
         result = fm.apply_filters()
         assert set(result["device_brand"].unique()) == {"HP"}
 
+    def test_useful_life_filter_derives_column_and_filters(self, sample_equipos_df):
+        # FilterManager receives the raw df (only acquisition_date); it must
+        # derive useful_life_consumed_days so the VIDA ÚTIL filter works.
+        from features.config import get_useful_life_params
+
+        fm = FilterManager(sample_equipos_df)
+        assert "useful_life_consumed_days" in fm.original_df.columns
+
+        low, high = get_useful_life_params()["OPERATIVO"]
+        fm._active_filters["useful_life"] = "OPERATIVO"
+        result = fm.apply_filters()
+
+        # Filter must take effect (subset) and respect the configured range
+        assert len(result) < len(sample_equipos_df)
+        vals = result["useful_life_consumed_days"]
+        assert ((vals >= low) & (vals < high)).all()
+
     def test_empty_filter_no_crash(self, sample_equipos_df):
         fm = FilterManager(sample_equipos_df)
         fm._active_filters = {}

@@ -65,23 +65,52 @@ class DataDriftDetector:
 
     def render_ui(self, new_df):
         st.subheader("Monitoreo de Data Drift")
+        st.caption(
+            "Prueba de Kolmogórov–Smirnov entre los datos de referencia (baseline) y los "
+            f"datos nuevos. Se considera *drift* si el p-valor < {DRIFT_THRESHOLD_P_VALUE}."
+        )
         results = self.check_drift(new_df)
 
         if not results:
-            st.info("No hay variables comparables entre el baseline y los nuevos datos.")
+            st.info("No hay variables comparables entre el baseline y los nuevos datos.", icon=":material/info:")
             return results
 
+        n_drift = sum(1 for r in results.values() if r["drift_detected"])
+        c1, c2 = st.columns(2)
+        c1.metric("Variables monitoreadas", len(results))
+        c2.metric(
+            "Variables con drift",
+            n_drift,
+            delta=None if n_drift == 0 else f"{n_drift} alerta(s)",
+            delta_color="inverse",
+            help="Variables cuya distribución cambió de forma significativa frente al baseline.",
+        )
+
+        if n_drift == 0:
+            st.success("Todas las distribuciones se mantienen estables frente al baseline.", icon=":material/check_circle:")
+        else:
+            st.error(
+                f"Se detectó drift en {n_drift} variable(s). El modelo puede no ser confiable "
+                "para los nuevos datos; considere reentrenar.",
+                icon=":material/crisis_alert:",
+            )
+
+        st.markdown("---")
         for key, result in results.items():
             label = MONITORED_FEATURES.get(key, key)
-            col1, col2 = st.columns(2)
+            drift = result["drift_detected"]
+            icon = ":material/warning:" if drift else ":material/check_circle:"
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
-                st.metric(f"{label} - KS Statistic", f"{result['ks_statistic']:.4f}")
-            with col2:
-                st.metric(f"{label} - P-Value", f"{result['p_value']:.4f}")
-
-            if result["drift_detected"]:
-                st.error(f"⚠️ ALERTA: Drift detectado en {label}. El modelo puede no ser confiable para nuevos datos.")
-            else:
-                st.success(f"✓ Distribución de {label} estable")
+                st.markdown(f"{icon} **{label}**")
+                st.caption("Drift detectado" if drift else "Distribución estable")
+            col2.metric(
+                "KS", f"{result['ks_statistic']:.3f}",
+                help="Estadístico de Kolmogórov–Smirnov: distancia máxima entre las dos distribuciones.",
+            )
+            col3.metric(
+                "p-valor", f"{result['p_value']:.3f}",
+                help=f"Drift si p < {DRIFT_THRESHOLD_P_VALUE}.",
+            )
 
         return results

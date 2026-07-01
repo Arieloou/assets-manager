@@ -1,0 +1,58 @@
+# =============================================================================
+#  Tema visual del Sistema de Predicción de Fallos / Riesgo Operativo
+# -----------------------------------------------------------------------------
+#  Esquema verificado contra Streamlit 1.58 (theme / theme.sidebar /
+#  theme.light / theme.dark + variantes de barra lateral).
+#  Una sola paleta coherente: el azul corporativo es el color primario y los
+#  colores semánticos de riesgo (verde -> rojo) viven en features/theme.py y se
+#  aplican explícitamente en cada gráfico. Aquí solo se define la identidad de
+#  la app y los colores categóricos por defecto de los gráficos.
+# =============================================================================
+
+[theme]
+# Apariencia por defecto (el usuario puede alternar Claro/Oscuro en el menú).
+base = "light"
+primaryColor = "#2563EB"          # Azul corporativo (acciones, foco, primary)
+linkColor = "#2563EB"
+font = "sans-serif"
+headingFont = "sans-serif"
+baseRadius = "medium"             # Esquinas redondeadas, look moderno
+showWidgetBorder = true           # Bordes sutiles -> tarjetas/KPIs definidos
+
+# Paleta categórica por defecto para gráficos que NO codifican riesgo
+# (p. ej. distribución por ubicación). Los gráficos de riesgo/estado usan los
+# colores semánticos de features/theme.py.
+chartCategoricalColors = [
+    "#2563EB", "#0EA5E9", "#14B8A6", "#8B5CF6",
+    "#F59E0B", "#EC4899", "#10B981", "#6366F1",
+]
+
+# ----------------------------- Tema CLARO ------------------------------------
+[theme.light]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EEF2F7"   # Fondo de tarjetas/métricas/inputs
+textColor = "#0F172A"                  # slate-900
+borderColor = "#E2E8F0"                # slate-200
+
+[theme.light.sidebar]
+backgroundColor = "#F1F5F9"            # Barra lateral diferenciada del lienzo
+secondaryBackgroundColor = "#E2E8F0"
+textColor = "#0F172A"
+borderColor = "#CBD5E1"
+primaryColor = "#2563EB"
+
+# ----------------------------- Tema OSCURO -----------------------------------
+[theme.dark]
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#1C2230"
+textColor = "#E6EAF1"
+borderColor = "#2A3344"
+primaryColor = "#3B82F6"
+linkColor = "#60A5FA"
+
+[theme.dark.sidebar]
+backgroundColor = "#161C28"            # Barra lateral un punto más clara que el lienzo
+secondaryBackgroundColor = "#222A38"
+textColor = "#E6EAF1"
+borderColor = "#2A3344"
+primaryColor = "#3B82F6"

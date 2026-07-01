@@ -10,7 +10,7 @@ class ModelPredictor:
         """Initialize with a trained model and a fitted preprocessor.
 
         Args:
-            model: Object with ``predict``/``predict_proba`` (ModelTrainer or
+            model: Object with ``predict``/``soft_output_predict`` (ModelTrainer or
                 a raw sklearn pipeline).
             preprocessor: Fitted ``Preprocessor`` instance.
         """
@@ -48,15 +48,15 @@ class ModelPredictor:
             the proportions sum to ~1.0 (interpreted as prediction confidence).
         """
         X = self._prepare(pd.DataFrame([input_dict]))
-        proba = self.model.predict_proba(X)[0]
+        model_probabilities = self.model.soft_output_predict(X)[0]
 
         # Map model class indices (encoded ordinals) back to risk labels.
         classes = self.model.classes_
-        labels = self.preprocessor.decode_target(classes)
-        proba_by_label = dict(zip(labels, proba))
+        categories = self.preprocessor.decode_target(classes)
+        probability_by_categories = dict(zip(categories, model_probabilities))
 
         # Return ordered by the configured risk order, filling missing classes.
-        return {level: float(proba_by_label.get(level, 0.0)) for level in get_risk_levels()}
+        return {category: float(probability_by_categories.get(category, 0.0)) for category in get_risk_levels()}
 
     def predict_batch(self, df: pd.DataFrame) -> pd.DataFrame:
         """Predict risk levels for a DataFrame of raw records.

@@ -10,7 +10,12 @@ import joblib
 from pathlib import Path
 import streamlit_antd_components as sac
 
-st.set_page_config(page_title="Sistema Predicción de Fallos", layout="centered")
+st.set_page_config(
+    page_title="Sistema Predicción de Fallos",
+    page_icon=":material/build:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -26,13 +31,14 @@ if "baseline_df" not in st.session_state:
     st.session_state["baseline_df"] = None
 
 from features.auth.login import authenticate_user, require_auth
-from features.config import load_config, get_locations, get_hardware_states, get_device_types, get_brands, get_risk_levels
+from features.config import get_locations, get_hardware_states, get_device_types, get_brands, get_risk_levels
 from features.database import init_db, get_all_devices, save_prediction, get_predictions_history, save_trained_model
-from features.data import DataLoader, Preprocessor, import_csv, export_to_csv, save_to_database, get_historical_data
+from features.data import DataLoader, Preprocessor, import_csv, save_to_database
 from features.model import ModelTrainer, ModelPredictor, ModelEvaluator
 from features.dashboard import display_all_kpis, render_all_charts, render_correlation_matrix, FilterManager
 from features.monitoring import DataDriftDetector, ConfusionMatrixMonitor
 from features.alerts import EarlyWarningSystem, FeatureImportanceViewer
+from features.theme import RISK_ICONS, RISK_COLORS, NEUTRAL, style_fig
 
 def init_session():
     try:
@@ -40,9 +46,18 @@ def init_session():
     except Exception as e:
         st.warning(f"Base de datos no disponible: {e}")
 
+@st.cache_data(show_spinner=False)
+def fetch_all_devices():
+    """Lectura cacheada de equipos desde la BD.
+
+    Evita golpear la base de datos en cada rerun. La caché se invalida
+    explícitamente (``fetch_all_devices.clear()``) tras importar un CSV.
+    """
+    return get_all_devices()
+
 def load_initial_data():
     try:
-        df = get_all_devices()
+        df = fetch_all_devices()
         if not df.empty:
             st.session_state["baseline_df"] = df
         return df
@@ -50,35 +65,11 @@ def load_initial_data():
         st.warning(f"No se pudieron cargar datos: {e}")
         return pd.DataFrame()
 
-def floating_progress(placeholder, pct, message):
-    """Render a floating progress notification (fixed position) with a percentage."""
-    pct = max(0, min(100, int(round(pct))))
-    placeholder.markdown(
-        f"""
-        <div style="position: fixed; top: 4.5rem; right: 1.5rem; z-index: 1000000;
-                    background: rgba(17,24,39,0.96); color: #f9fafb; padding: 14px 18px;
-                    border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-                    min-width: 270px; font-family: 'Source Sans Pro', sans-serif;">
-            <div style="display:flex; align-items:center; gap:8px; font-size:0.9rem; margin-bottom:10px;">
-                <span>{message}</span>
-            </div>
-            <div style="background:#374151; border-radius:8px; overflow:hidden; height:10px;">
-                <div style="width:{pct}%; height:100%; transition: width .25s ease;
-                            background:linear-gradient(90deg,#10b981,#34d399);"></div>
-            </div>
-            <div style="text-align:right; font-size:0.8rem; margin-top:6px; color:#9ca3af;">{pct}%</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def train_model(df):
     from sklearn.model_selection import train_test_split
 
-    progress = st.empty()
-    try:
-        floating_progress(progress, 5, "Cargando datos del dataset...")
+    with st.status("Entrenando modelo Random Forest…", expanded=True) as status:
+        prog = st.progress(5, text="Cargando datos del dataset…")
         loader = DataLoader()
         preprocessor = Preprocessor()
 
@@ -87,25 +78,25 @@ def train_model(df):
 
         # Split the RAW data first so the scaler/encoders are fit on train only
         # (avoids leaking test statistics into the StandardScaler).
-        floating_progress(progress, 20, "Particionando datos (entrenamiento/prueba)...")
+        prog.progress(20, text="Particionando datos (entrenamiento/prueba)…")
         raw_train, raw_test, target_train, target_test = train_test_split(
             features, targets, test_size=0.20, random_state=0,
             stratify=targets[loader.TARGET_COLUMNS[0]],
         )
 
         # Build scaled/encoded feature matrices and encode the target
-        floating_progress(progress, 40, "Procesando features (escalado y codificación)...")
+        prog.progress(40, text="Procesando features (escalado y codificación)…")
         X_train = preprocessor.build_features(raw_train, fit=True)
         X_test = preprocessor.build_features(raw_test, fit=False)
         y_train = preprocessor.encode_target(target_train, fit=True)
         y_test = preprocessor.encode_target(target_test, fit=False)
 
-        floating_progress(progress, 65, "Optimizando hiperparámetros (RandomizedSearchCV)...")
+        prog.progress(65, text="Optimizando hiperparámetros (RandomizedSearchCV)…")
         trainer = ModelTrainer()
         trainer.tune_hyperparameters(X_train, y_train)
 
         # Evaluate on the held-out test partition, in original label space
-        floating_progress(progress, 85, "Evaluando el modelo...")
+        prog.progress(85, text="Evaluando el modelo…")
         y_pred = trainer.predict(X_test)
         evaluator = ModelEvaluator(trainer, preprocessor)
         y_test_labels = preprocessor.decode_target(y_test)
@@ -123,7 +114,7 @@ def train_model(df):
         st.session_state["best_params"] = trainer.best_params_
         st.session_state["best_cv_score"] = trainer.best_cv_score_
 
-        floating_progress(progress, 95, "Guardando el modelo...")
+        prog.progress(95, text="Guardando el modelo…")
         model_data = {
             "model_name": f"RandomForest_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}",
             "model_path": f"models/trained_models/rf_model_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.joblib",
@@ -147,26 +138,11 @@ def train_model(df):
         st.session_state["predictor"] = predictor
         st.session_state["model_trained"] = True
 
-        floating_progress(progress, 100, "¡Procesamiento completado!")
-        time.sleep(0.5)
-    finally:
-        progress.empty()
+        prog.progress(100, text="¡Procesamiento completado!")
+        status.update(label="Modelo entrenado correctamente", state="complete", expanded=False)
 
     st.toast("Modelo entrenado correctamente")
     return trainer
-
-def render_login_page():
-    authenticator = authenticate_user()
-    authenticator.login(location='main')
-
-    if st.session_state.get("authentication_status"):
-        st.session_state["authenticated"] = True
-        st.session_state["username"] = st.session_state.get("name")
-        st.rerun()
-    elif st.session_state.get("authentication_status") is False:
-        sac.alert(label="Credenciales incorrectas. Verifique su usuario y contraseña.", color="error", icon=True)
-    elif st.session_state.get("authentication_status") is None:
-        pass
 
 def render_prediction_form():
     st.subheader("Predicción de Nivel de Riesgo Operativo")
@@ -174,35 +150,62 @@ def render_prediction_form():
     from datetime import date
     import json
 
-    col1, col2 = st.columns(2)
-    with col1:
-        device_brand = st.selectbox("Marca", get_brands())
-        device_type = st.selectbox("Tipo de Equipo", get_device_types())
-        acquisition_date = st.date_input(
-            "Fecha de Adquisición", value=date(2021, 1, 1), max_value=date.today()
-        )
-        technical_incident_rate = st.number_input(
-            "Tasa Incidencias Técnicas", min_value=0, max_value=100, value=2
-        )
-    with col2:
-        headquarters_location = st.selectbox("Ubicación", get_locations())
-        hardware_integrity_status = st.selectbox("Estado de Integridad de Hardware", get_hardware_states())
-        no_corrective = st.checkbox("Sin mantenimiento correctivo registrado", value=False)
-        last_reactive_maintenance_date = None
-        if not no_corrective:
-            last_reactive_maintenance_date = st.date_input(
-                "Fecha Último Mto. Correctivo", value=date(2025, 1, 1), max_value=date.today()
+    # Formulario: solo predice al pulsar "Predecir" (no en cada cambio de campo).
+    with st.form("prediction_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            device_brand = st.selectbox("Marca", get_brands())
+            device_type = st.selectbox("Tipo de Equipo", get_device_types())
+            acquisition_date = st.date_input(
+                "Fecha de Adquisición", value=date(2021, 1, 1), max_value=date.today(),
+                help="Fecha en que el equipo entró en operación. Determina la vida útil consumida.",
             )
-        last_preventive_maintenance_date = st.date_input(
-            "Fecha Último Mto. Preventivo", value=date(2024, 1, 1), max_value=date.today()
-        )
+            technical_incident_rate = st.number_input(
+                "Tasa Incidencias Técnicas", min_value=0, max_value=100, value=2,
+                help="Número de incidencias técnicas registradas para el equipo. "
+                     "Valores altos elevan el riesgo.",
+            )
+        with col2:
+            headquarters_location = st.selectbox("Ubicación", get_locations())
+            hardware_integrity_status = st.selectbox(
+                "Estado de Integridad de Hardware", get_hardware_states(),
+                help="Estado físico del hardware, de 'Excelente' (mejor) a 'Crítico' (peor).",
+            )
+            no_corrective = st.checkbox(
+                "Sin mantenimiento correctivo registrado", value=False,
+                help="Marque si el equipo nunca tuvo mantenimiento correctivo. "
+                     "Se ignorará la fecha y el modelo usará la vida útil consumida.",
+            )
+            last_reactive_maintenance_date = st.date_input(
+                "Fecha Último Mto. Correctivo", value=date(2025, 1, 1), max_value=date.today(),
+                help="Fecha del último mantenimiento correctivo. Marque la casilla superior si "
+                     "el equipo no tiene mantenimientos correctivos registrados.",
+            )
+            no_preventive = st.checkbox(
+                "Sin mantenimiento preventivo registrado", value=False,
+                help="Marque si el equipo nunca tuvo mantenimiento preventivo. "
+                     "Se ignorará la fecha y el modelo usará la vida útil consumida.",
+            )
+            last_preventive_maintenance_date = st.date_input(
+                "Fecha Último Mto. Preventivo", value=date(2024, 1, 1), max_value=date.today(),
+                help="Fecha del último mantenimiento preventivo. Marque la casilla superior si "
+                     "el equipo no tiene mantenimientos preventivos registrados.",
+            )
 
-    predict_clicked = st.button("Predecir Nivel de Riesgo", type="primary")
+        predict_clicked = st.form_submit_button("Predecir Nivel de Riesgo", type="primary")
 
     if predict_clicked:
         if st.session_state["predictor"] is None:
-            sac.alert(label="El modelo aún no ha sido entrenado", color="warning", icon=True)
+            st.warning("El modelo aún no ha sido entrenado.", icon=":material/warning:")
             return
+
+        # Dentro de un st.form la casilla no oculta el campo de fecha en vivo;
+        # aplicamos su efecto al enviar: si se marca "sin mantenimiento", la
+        # fecha se envía como NaT y el preprocesador usa la vida útil consumida.
+        if no_corrective:
+            last_reactive_maintenance_date = None
+        if no_preventive:
+            last_preventive_maintenance_date = None
 
         input_dict = {
             "device_brand": device_brand,
@@ -214,24 +217,57 @@ def render_prediction_form():
             "last_reactive_maintenance_date": (
                 pd.Timestamp(last_reactive_maintenance_date) if last_reactive_maintenance_date else pd.NaT
             ),
-            "last_preventive_maintenance_date": pd.Timestamp(last_preventive_maintenance_date),
+            "last_preventive_maintenance_date": (
+                pd.Timestamp(last_preventive_maintenance_date) if last_preventive_maintenance_date else pd.NaT
+            ),
         }
 
         predictor = st.session_state["predictor"]
         risk_level = predictor.predict(input_dict)
         confidence = predictor.predict_proba(input_dict)
 
-        status = "error" if risk_level in ("Alto", "Muy Alto") else (
-            "warning" if risk_level == "Medio" else "success"
-        )
-        sac.result(label="Nivel de Riesgo Operativo Predicho", description=risk_level, status=status)
+        # --- Resultado principal (titular destacado) --------------------------
+        # El ícono Material (":material/...:") va como Markdown fuera del HTML
+        # para que se renderice; el color del nivel se aplica con un <span>.
+        color = RISK_COLORS.get(risk_level, NEUTRAL)
+        icon = RISK_ICONS.get(risk_level, ":material/help:")
+        top_prop = confidence.get(risk_level, max(confidence.values()) if confidence else 0.0)
+        with st.container(border=True):
+            st.caption("Nivel de Riesgo Operativo Predicho")
+            st.markdown(
+                f"{icon} <span style='font-size:1.9rem; font-weight:700; color:{color}; "
+                f"vertical-align:middle;'>{risk_level}</span>",
+                unsafe_allow_html=True,
+            )
+            st.caption(f"El modelo asigna el {top_prop * 100:.0f}% de los votos a este nivel.")
 
-        # Soft output: vote proportion per risk level (confidence)
-        st.markdown("**Confianza de la predicción (proporción de votos)**")
-        cols = st.columns(len(confidence))
-        for col, (level, prop) in zip(cols, confidence.items()):
-            with col:
-                st.metric(level, f"{prop * 100:.1f}%")
+        # --- Confianza: barra horizontal ordenada por proporción de votos -----
+        st.markdown("**Confianza de la predicción (proporción de votos por nivel)**")
+        conf_df = pd.DataFrame(
+            {"Nivel": list(confidence.keys()),
+             "Confianza": [v * 100 for v in confidence.values()]}
+        ).sort_values("Confianza", ascending=True)
+        fig = px.bar(
+            conf_df,
+            x="Confianza",
+            y="Nivel",
+            orientation="h",
+            color="Nivel",
+            color_discrete_map=RISK_COLORS,
+            category_orders={"Nivel": conf_df["Nivel"].tolist()},
+            text=conf_df["Confianza"].map(lambda v: f"{v:.1f}%"),
+        )
+        fig.update_traces(textposition="outside", cliponaxis=False,
+                          hovertemplate="<b>%{y}</b><br>%{x:.1f}% de los votos<extra></extra>")
+        fig.update_xaxes(range=[0, 100])
+        style_fig(
+            fig,
+            xaxis_title="Confianza (%)",
+            yaxis_title=None,
+            height=300,
+            show_legend=False,
+        )
+        st.plotly_chart(fig, width="stretch")
 
         # Derive day-difference features so they can be stored with the prediction
         engineered = Preprocessor().engineer_features(pd.DataFrame([input_dict]))
@@ -243,7 +279,7 @@ def render_prediction_form():
                 device_id, risk_level, {"device_type": device_type, "device_brand": device_brand}
             )
             if alerts:
-                sac.alert(label="Se han generado alertas para este equipo", color="warning", icon=True)
+                st.warning("Se han generado alertas para este equipo.", icon=":material/notifications:")
         except Exception as e:
             st.warning(f"No se pudieron registrar alertas: {e}")
 
@@ -267,59 +303,43 @@ def render_prediction_form():
 
         return risk_level
 
-def render_import_export():
-    st.subheader("Importar/Exportar Datos")
+def render_import():
+    st.subheader("Importar Data")
 
-    tabs = sac.tabs(items=["Importar CSV", "Exportar Histórico"], align="left")
+    uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
 
-    if tabs == "Importar CSV":
-        uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
+    if uploaded_file is not None:
+        try:
+            df = import_csv(uploaded_file)
+            st.success(f"CSV cargado: {len(df)} registros", icon=":material/check_circle:")
 
-        if uploaded_file is not None:
-            try:
-                df = import_csv(uploaded_file)
-                st.success(f"CSV cargado: {len(df)} registros")
-
-                if st.button("Guardar en Base de Datos", type="primary"):
-                    progress = st.empty()
+            if st.button("Guardar en Base de Datos", type="primary"):
+                with st.status("Guardando en base de datos…", expanded=True) as status:
+                    prog = st.progress(0, text="Guardando en base de datos…")
                     last_pct = {"value": -1}
 
                     def _save_progress(done, total):
                         pct = int(done / total * 100) if total else 100
-                        # Throttle: only re-render the overlay when the percent changes
+                        # Throttle: only re-render the bar when the percent changes
                         if pct != last_pct["value"]:
                             last_pct["value"] = pct
-                            floating_progress(
-                                progress, pct, f"Guardando en base de datos... ({done}/{total})"
+                            prog.progress(
+                                pct, text=f"Guardando en base de datos… ({done}/{total})"
                             )
 
-                    try:
-                        floating_progress(progress, 0, "Guardando en base de datos...")
-                        count = save_to_database(df, progress_callback=_save_progress)
-                        floating_progress(progress, 100, "¡Guardado completado!")
-                        time.sleep(0.4)
-                    finally:
-                        progress.empty()
+                    count = save_to_database(df, progress_callback=_save_progress)
+                    prog.progress(100, text="¡Guardado completado!")
+                    status.update(
+                        label=f"{count} registros guardados", state="complete", expanded=False
+                    )
 
-                    st.toast(f"{count} registros guardados", icon="✅")
-                    sac.alert(label=f"{count} registros guardados exitosamente", color="success", icon=True)
-                    st.rerun()
-            except Exception as e:
-                sac.alert(label=f"Error al importar: {e}", color="error", icon=True)
-    else:
-        if st.button("Descargar CSV", type="primary"):
-            try:
-                df = get_historical_data()
-                csv_bytes = export_to_csv(df)
-                st.download_button(
-                    label="Descargar datos completos",
-                    data=csv_bytes,
-                    file_name=f"historico_equipos_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-                sac.alert(label="Descarga lista", color="success", icon=True)
-            except Exception as e:
-                sac.alert(label=f"Error al exportar: {e}", color="error", icon=True)
+                # Los datos cambiaron: invalidar las cachés de lectura/exportación.
+                fetch_all_devices.clear()
+                st.toast(f"{count} registros guardados")
+                st.success(f"{count} registros guardados exitosamente", icon=":material/check_circle:")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error al importar: {e}", icon=":material/block:")
 
 def render_dashboard(df):
     # Derive day-based features (useful_life_consumed_days, etc.) for KPIs/charts
@@ -334,9 +354,11 @@ def render_dashboard(df):
 def render_model_section(df):
     st.subheader("Gestión del Modelo")
 
-    tabs = sac.tabs(items=["Entrenar", "Feature Importance", "Métricas", "Correlación"], align="left")
+    tab_train, tab_fi, tab_metrics, tab_corr = st.tabs(
+        ["Entrenar", "Feature Importance", "Métricas", "Correlación"]
+    )
 
-    if tabs == "Entrenar":
+    with tab_train:
         col1, col2 = st.columns([1, 2])
         with col1:
             if st.button("Entrenar Modelo Random Forest", type="primary"):
@@ -344,41 +366,69 @@ def render_model_section(df):
                 st.rerun()
 
         if st.session_state["model_trained"]:
-            sac.result(
-                label="Modelo Entrenado",
-                description="Random Forest listo para predicciones",
-                status="success"
-            )
+            st.success("**Modelo Entrenado** — Random Forest listo para predicciones", icon=":material/check_circle:")
         else:
-            sac.result(
-                label="Modelo No Entrenado",
-                description="Entrene el modelo para comenzar",
-                status="info"
-            )
+            st.info("**Modelo No Entrenado** — Entrene el modelo para comenzar", icon=":material/info:")
 
-    elif tabs == "Feature Importance":
+    with tab_fi:
         if st.session_state["trainer"] is not None:
             viewer = FeatureImportanceViewer(st.session_state["trainer"])
             viewer.render()
         else:
-            sac.alert(label="Entrena el modelo para ver la importancia de variables", color="info", closable=False)
+            st.info("Entrena el modelo para ver la importancia de variables", icon=":material/info:")
 
-    elif tabs == "Métricas":
+    with tab_metrics:
         if st.session_state["model_trained"]:
             summary = st.session_state.get("test_metrics")
 
             if summary is not None:
                 st.markdown("**Métricas globales (partición de prueba)**")
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Accuracy", f"{summary['accuracy'] * 100:.2f}%")
-                c2.metric("Precision (macro)", f"{summary['precision_macro'] * 100:.2f}%")
-                c3.metric("Recall (macro)", f"{summary['recall_macro'] * 100:.2f}%")
-                c4.metric("F1-Score (macro)", f"{summary['f1_macro'] * 100:.2f}%")
+                c1.metric("Accuracy", f"{summary['accuracy'] * 100:.2f}%",
+                          help="Porcentaje total de equipos clasificados correctamente.")
+                c2.metric("Precision (macro)", f"{summary['precision_macro'] * 100:.2f}%",
+                          help="De lo que el modelo marcó en cada clase, qué proporción acertó "
+                               "(promedio sin ponderar por clase).")
+                c3.metric("Recall (macro)", f"{summary['recall_macro'] * 100:.2f}%",
+                          help="De los casos reales de cada clase, qué proporción detectó. "
+                               "Es la métrica prioritaria para el alto riesgo.")
+                c4.metric("F1-Score (macro)", f"{summary['f1_macro'] * 100:.2f}%",
+                          help="Media armónica entre precisión y recall (promedio por clase).")
 
                 c5, c6, c7 = st.columns(3)
-                c5.metric("Precision (weighted)", f"{summary['precision_weighted'] * 100:.2f}%")
-                c6.metric("Recall (weighted)", f"{summary['recall_weighted'] * 100:.2f}%")
-                c7.metric("F1-Score (weighted)", f"{summary['f1_weighted'] * 100:.2f}%")
+                c5.metric("Precision (weighted)", f"{summary['precision_weighted'] * 100:.2f}%",
+                          help="Precisión promedio ponderada por el nº de equipos de cada clase.")
+                c6.metric("Recall (weighted)", f"{summary['recall_weighted'] * 100:.2f}%",
+                          help="Recall promedio ponderado por el nº de equipos de cada clase.")
+                c7.metric("F1-Score (weighted)", f"{summary['f1_weighted'] * 100:.2f}%",
+                          help="F1 promedio ponderado por el nº de equipos de cada clase.")
+
+                st.info(
+                    "**Prioridad: el _recall_ en las clases de alto riesgo (Alto / Muy Alto).** "
+                    "No detectar un equipo realmente de alto riesgo (falso negativo) es mucho más "
+                    "costoso que una falsa alarma, por lo que conviene maximizar el recall en esas clases.",
+                    icon=":material/target:",
+                )
+
+            # --- Recall por clase (énfasis en alto riesgo) --------------------
+            report = st.session_state.get("test_report")
+            if isinstance(report, dict):
+                st.markdown("**Recall por nivel de riesgo (sensibilidad)**")
+                cols = st.columns(len(get_risk_levels()))
+                for col, level in zip(cols, get_risk_levels()):
+                    cls = report.get(level)
+                    if not isinstance(cls, dict):
+                        continue
+                    recall = cls.get("recall", 0.0)
+                    support = int(cls.get("support", 0))
+                    col.metric(
+                        level,
+                        f"{recall * 100:.0f}%",
+                        delta=f"{support} casos",
+                        delta_color="off",
+                        help=f"De los {support} equipos realmente '{level}', el modelo detectó el "
+                             f"{recall * 100:.0f}%.",
+                    )
 
             best_params = st.session_state.get("best_params")
             best_cv_score = st.session_state.get("best_cv_score")
@@ -387,30 +437,31 @@ def render_model_section(df):
                 st.markdown("**Mejores Hiperparámetros (RandomizedSearchCV)**")
                 if best_cv_score is not None:
                     st.metric("F1-Score (macro, validación cruzada)", f"{best_cv_score * 100:.2f}%")
-                st.json(best_params)
+                with st.expander("Ver hiperparámetros seleccionados"):
+                    st.json(best_params)
 
         else:
-            sac.alert(label="No hay métricas disponibles", color="info", closable=False)
+            st.info("No hay métricas disponibles", icon=":material/info:")
 
-    elif tabs == "Correlación":
+    with tab_corr:
         if df.empty:
-            sac.alert(label="No hay datos para calcular la correlación", color="info", closable=False)
+            st.info("No hay datos para calcular la correlación", icon=":material/info:")
         else:
             render_correlation_matrix(df)
 
 def render_monitoring_section(df):
     st.subheader("Monitoreo")
 
-    tabs = sac.tabs(items=["Data Drift", "Matriz de Confusión"], align="left")
+    tab_drift, tab_cm = st.tabs(["Data Drift", "Matriz de Confusión"])
 
-    if tabs == "Data Drift":
+    with tab_drift:
         if st.session_state["baseline_df"] is not None and not df.empty:
             detector = DataDriftDetector(st.session_state["baseline_df"])
             detector.render_ui(df)
         else:
-            sac.alert(label="No hay datos de referencia para comparar", color="info", closable=False)
+            st.info("No hay datos de referencia para comparar", icon=":material/info:")
 
-    elif tabs == "Matriz de Confusión":
+    with tab_cm:
         history = get_predictions_history(limit=100)
 
         # Render the dynamic confusion matrix on the current database data if the model is trained
@@ -432,9 +483,9 @@ def render_monitoring_section(df):
                 except Exception as e:
                     st.error(f"Error al calcular la matriz de confusión dinámica: {e}")
             else:
-                sac.alert(label="No hay datos cargados para generar la matriz de confusión dinámica.", color="warning", closable=False)
+                st.warning("No hay datos cargados para generar la matriz de confusión dinámica.", icon=":material/warning:")
         else:
-            sac.alert(label="El modelo no está entrenado. Por favor, entrene el modelo en la sección 'Modelo' para ver la matriz de confusión dinámica.", color="info", closable=False)
+            st.info("El modelo no está entrenado. Por favor, entrene el modelo en la sección 'Modelo' para ver la matriz de confusión dinámica.", icon=":material/info:")
 
         st.markdown("---")
 
@@ -444,7 +495,7 @@ def render_monitoring_section(df):
             cm_monitor = ConfusionMatrixMonitor(eval_obj)
             cm_monitor.render_historical(history)
         else:
-            sac.alert(label="No hay historial de predicciones guardado.", color="info", closable=False)
+            st.info("No hay historial de predicciones guardado.", icon=":material/info:")
 
 def render_alerts_section():
     st.subheader("Alertas Tempranas")
@@ -467,7 +518,7 @@ def main_app():
             items=[
                 sac.MenuItem("Dashboard", icon="speedometer2"),
                 sac.MenuItem("Predicción", icon="cpu"),
-                sac.MenuItem("Importar/Exportar", icon="arrow-left-right"),
+                sac.MenuItem("Importar Data", icon="arrow-left-right"),
                 sac.MenuItem("Modelo", icon="gear"),
                 sac.MenuItem("Monitoreo", icon="activity"),
                 sac.MenuItem("Alertas", icon="bell"),
@@ -479,7 +530,15 @@ def main_app():
 
     if page == "Dashboard":
         if df.empty:
-            sac.alert(label="No hay datos registrados. Importa un CSV para comenzar.", color="warning", closable=False)
+            with st.container(border=True):
+                st.markdown("### :material/upload_file: Aún no hay datos para mostrar")
+                st.markdown(
+                    "Para comenzar a ver indicadores y gráficos:\n\n"
+                    "1. Ve a **Importar/Exportar** en el menú lateral.\n"
+                    "2. Sube un archivo **CSV** de equipos.\n"
+                    "3. Pulsa **Guardar en Base de Datos**.\n\n"
+                    "Después podrás entrenar el modelo en **Modelo** y generar predicciones."
+                )
         else:
             filter_mgr = FilterManager(df)
             filtered_df = filter_mgr.render_ui()
@@ -488,12 +547,12 @@ def main_app():
     elif page == "Predicción":
         render_prediction_form()
 
-    elif page == "Importar/Exportar":
-        render_import_export()
+    elif page == "Importar Data":
+        render_import()
 
     elif page == "Modelo":
         if df.empty:
-            sac.alert(label="No hay datos para entrenar el modelo", color="warning", closable=False)
+            st.warning("No hay datos para entrenar el modelo", icon=":material/warning:")
         else:
             render_model_section(df)
 
@@ -522,7 +581,7 @@ def main():
             time.sleep(0.5)
             st.rerun()
         elif st.session_state.get("authentication_status") is False:
-            sac.alert(label="Credenciales incorrectas. Verifique su usuario y contraseña.", color="error", icon=True)
+            st.error("Credenciales incorrectas. Verifique su usuario y contraseña.", icon=":material/block:")
     else:
         # Render main application contents first
         main_app()

@@ -61,9 +61,10 @@ class Preprocessor:
 
         Adds ``useful_life_consumed_days``, ``days_since_last_corrective_maintenance``
         and ``days_since_last_preventive_maintenance`` (days elapsed up to the
-        reference date). When ``last_reactive_maintenance_date`` is missing (no
-        corrective maintenance ever performed), the days-since-corrective feature
-        falls back to ``useful_life_consumed_days``.
+        reference date). When ``last_reactive_maintenance_date`` or
+        ``last_preventive_maintenance_date`` is missing (no maintenance of that
+        type ever performed), the corresponding days-since feature falls back to
+        ``useful_life_consumed_days`` (the equipment went its whole life without it).
         """
         df = df.copy()
         ref = pd.Timestamp(self._ref_date())
@@ -76,9 +77,13 @@ class Preprocessor:
         df['days_since_last_corrective_maintenance'] = (ref - corrective).dt.days
         df['days_since_last_preventive_maintenance'] = (ref - preventive).dt.days
 
-        # No corrective maintenance -> it has gone its whole life without one.
+        # No corrective / preventive maintenance -> it has gone its whole life
+        # without one: fall back to the useful-life-consumed days.
         df['days_since_last_corrective_maintenance'] = (
             df['days_since_last_corrective_maintenance'].fillna(df['useful_life_consumed_days'])
+        )
+        df['days_since_last_preventive_maintenance'] = (
+            df['days_since_last_preventive_maintenance'].fillna(df['useful_life_consumed_days'])
         )
 
         return df
@@ -135,6 +140,7 @@ class Preprocessor:
 
         if fit:
             self._feature_names = list(X.columns)
+
         return X
 
     # ------------------------------------------------------------------ #
