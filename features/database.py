@@ -172,6 +172,29 @@ def get_all_devices() -> pd.DataFrame:
         "registered_at": device.registered_at,
     } for device in devices])
 
+def clear_all_data() -> dict:
+    """Delete all imported devices, predictions and alerts from the database.
+
+    Historical data (which references ``devices`` via a foreign key) is deleted
+    first to avoid FK constraint violations. Users, trained models and drift
+    logs are preserved. Returns a dict with the number of rows deleted per table.
+    """
+    session = get_session()
+    try:
+        counts = {
+            "historical_data": session.query(HistoricalData).delete(),
+            "devices": session.query(Device).delete(),
+            "predictions": session.query(Prediction).delete(),
+            "alerts": session.query(Alert).delete(),
+        }
+        session.commit()
+        return counts
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 def save_prediction(prediction_data: dict) -> Prediction:
     session = get_session()
     prediction = Prediction(**prediction_data)

@@ -45,7 +45,4 @@ class ModelEvaluator:
             "precision_macro": macro.get("precision", 0.0),
             "recall_macro": macro.get("recall", 0.0),
             "f1_macro": macro.get("f1-score", 0.0),
-            "precision_weighted": weighted.get("precision", 0.0),
-            "recall_weighted": weighted.get("recall", 0.0),
-            "f1_weighted": weighted.get("f1-score", 0.0),
         }

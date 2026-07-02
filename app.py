@@ -30,15 +30,28 @@ if "predictor" not in st.session_state:
 if "baseline_df" not in st.session_state:
     st.session_state["baseline_df"] = None
 
-from features.auth.login import authenticate_user, require_auth
 from features.config import get_locations, get_hardware_states, get_device_types, get_brands, get_risk_levels
-from features.database import init_db, get_all_devices, save_prediction, get_predictions_history, save_trained_model
+from features.database import init_db, get_all_devices, save_prediction, get_predictions_history, save_trained_model, clear_all_data
 from features.data import DataLoader, Preprocessor, import_csv, save_to_database
 from features.model import ModelTrainer, ModelPredictor, ModelEvaluator
 from features.dashboard import display_all_kpis, render_all_charts, render_correlation_matrix, FilterManager
 from features.monitoring import DataDriftDetector, ConfusionMatrixMonitor
 from features.alerts import EarlyWarningSystem, FeatureImportanceViewer
 from features.theme import RISK_ICONS, RISK_COLORS, NEUTRAL, style_fig
+
+LOGO_PATH = Path(__file__).parent / "assets" / "logo.svg"
+
+
+def render_sidebar_logo():
+    """Render the Servi Connect logo centered at the top of the sidebar."""
+    try:
+        svg = LOGO_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return
+    left, center, right = st.columns([1, 3, 1])
+    with center:
+        st.image(svg, width="stretch")
+
 
 def init_session():
     try:
@@ -341,6 +354,40 @@ def render_import():
         except Exception as e:
             st.error(f"Error al importar: {e}", icon=":material/block:")
 
+    # --- Zona de peligro: eliminar todos los datos importados -----------------
+    st.divider()
+    with st.expander("Zona de peligro — Eliminar todos los datos", icon=":material/warning:"):
+        st.warning(
+            "Esta acción elimina permanentemente **todos los equipos importados**, "
+            "además de **todas las predicciones y alertas** registradas. "
+            "No se puede deshacer.",
+            icon=":material/delete_forever:",
+        )
+        confirm = st.checkbox(
+            "Entiendo que esta acción es irreversible", key="confirm_delete_all"
+        )
+        if st.button(
+            "Eliminar todos los datos",
+            type="primary",
+            disabled=not confirm,
+            icon=":material/delete_forever:",
+        ):
+            try:
+                with st.spinner("Eliminando datos de la base de datos…"):
+                    counts = clear_all_data()
+                # Los datos cambiaron: invalidar cachés y estado en sesión.
+                fetch_all_devices.clear()
+                st.session_state["baseline_df"] = None
+                st.toast("Datos eliminados")
+                st.success(
+                    f"Se eliminaron {counts['devices']} equipos, "
+                    f"{counts['predictions']} predicciones y {counts['alerts']} alertas.",
+                    icon=":material/check_circle:",
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al eliminar los datos: {e}", icon=":material/block:")
+
 def render_dashboard(df):
     # Derive day-based features (useful_life_consumed_days, etc.) for KPIs/charts
     if not df.empty and "acquisition_date" in df.columns:
@@ -395,18 +442,10 @@ def render_model_section(df):
                 c4.metric("F1-Score (macro)", f"{summary['f1_macro'] * 100:.2f}%",
                           help="Media armónica entre precisión y recall (promedio por clase).")
 
-                c5, c6, c7 = st.columns(3)
-                c5.metric("Precision (weighted)", f"{summary['precision_weighted'] * 100:.2f}%",
-                          help="Precisión promedio ponderada por el nº de equipos de cada clase.")
-                c6.metric("Recall (weighted)", f"{summary['recall_weighted'] * 100:.2f}%",
-                          help="Recall promedio ponderado por el nº de equipos de cada clase.")
-                c7.metric("F1-Score (weighted)", f"{summary['f1_weighted'] * 100:.2f}%",
-                          help="F1 promedio ponderado por el nº de equipos de cada clase.")
-
                 st.info(
-                    "**Prioridad: el _recall_ en las clases de alto riesgo (Alto / Muy Alto).** "
-                    "No detectar un equipo realmente de alto riesgo (falso negativo) es mucho más "
-                    "costoso que una falsa alarma, por lo que conviene maximizar el recall en esas clases.",
+                    "**Prioridad: el recall en las clases de alto riesgo (Alto / Muy Alto).** "
+                    "No detectar un equipo de alto riesgo es más crítico que una falsa alarma, "
+                    "por lo que conviene priorizar el recall en esas clases.",
                     icon=":material/target:",
                 )
 
@@ -502,10 +541,7 @@ def render_alerts_section():
     alert_system = EarlyWarningSystem()
     alert_system.render_alerts_panel()
 
-def main_app():
-    st.title("Sistema de Predicción de Fallos en Equipos Electrónicos")
-    st.markdown("---")
-
+def main():
     init_session()
     df = load_initial_data()
 
@@ -514,11 +550,12 @@ def main_app():
 
     # Render the sidebar navigation menu using Streamlit Ant Design components
     with st.sidebar:
+        render_sidebar_logo()
         page = sac.menu(
             items=[
                 sac.MenuItem("Dashboard", icon="speedometer2"),
                 sac.MenuItem("Predicción", icon="cpu"),
-                sac.MenuItem("Importar Data", icon="arrow-left-right"),
+                sac.MenuItem("Data", icon="arrow-left-right"),
                 sac.MenuItem("Modelo", icon="gear"),
                 sac.MenuItem("Monitoreo", icon="activity"),
                 sac.MenuItem("Alertas", icon="bell"),
@@ -547,7 +584,7 @@ def main_app():
     elif page == "Predicción":
         render_prediction_form()
 
-    elif page == "Importar Data":
+    elif page == "Data":
         render_import()
 
     elif page == "Modelo":
@@ -561,34 +598,6 @@ def main_app():
 
     elif page == "Alertas":
         render_alerts_section()
-
-def main():
-    init_session()
-    # Initialize authenticator in session state to persist across reruns
-    if "authenticator" not in st.session_state:
-        st.session_state["authenticator"] = authenticate_user()
-    
-    authenticator = st.session_state["authenticator"]
-    # Render login widget if the user is not authenticated
-    if not st.session_state.get("authentication_status"):
-        try:
-            authenticator.login(location='main')
-        except Exception as e:
-            st.error(f"Error al iniciar sesión: {e}")
-        
-        # Check authentication status after login attempt or cookie check
-        if st.session_state.get("authentication_status"):
-            time.sleep(0.5)
-            st.rerun()
-        elif st.session_state.get("authentication_status") is False:
-            st.error("Credenciales incorrectas. Verifique su usuario y contraseña.", icon=":material/block:")
-    else:
-        # Render main application contents first
-        main_app()
-        # Add a visual separator in the sidebar
-        st.sidebar.divider()
-        # Render logout button below the menu navigation
-        authenticator.logout(location='sidebar')
 
 if __name__ == "__main__":
     main()

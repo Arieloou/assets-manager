@@ -219,3 +219,5 @@ __marimo__/
 
 # Credentials with sensitive data
 features/auth/credentials.yaml
+
+.mcp.json
